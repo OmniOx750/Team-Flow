@@ -2,7 +2,7 @@
   'use strict';
 
   const CONFIG = window.TEAM_FLOW_CONFIG || {};
-  const CACHE_KEY = 'teamFlowRemoteCacheV3';
+  const CACHE_KEY = 'teamFlowRemoteCacheV4';
   const USER_KEY = 'teamFlowCurrentUserV2';
   const TOKEN_KEY = 'teamFlowAccessTokenV2';
   const STATUS = {
@@ -13,7 +13,9 @@
     delayed: { label: '지연', color: '#e14a55' }
   };
   const PRIORITY = { low: '낮음', normal: '보통', high: '높음', urgent: '긴급' };
-  const REQUIRED_API_VERSION = '1.4.1';
+  const REQUIRED_API_VERSION = '1.6.0';
+  const DEFAULT_AVATAR_COLOR = '#2f6bff';
+  const AVATAR_PALETTE = ['#2f6bff', '#5b8def', '#7c5cff', '#ff5c7c', '#ef6c00', '#16a34a', '#10b981', '#0ea5e9', '#8b5cf6', '#ec4899', '#f59e0b', '#6b7280'];
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -63,16 +65,42 @@
     profileName: $('#profileName'),
     profileTeam: $('#profileTeam'),
     profileAvatar: $('#profileAvatar'),
+    openAvatarPickerBtn: $('#openAvatarPickerBtn'),
+    avatarPicker: $('#avatarPicker'),
     connectionBanner: $('#connectionBanner'),
     connectionLabel: $('#connectionLabel'),
     connectionDot: $('#connectionDot'),
     lastSyncLabel: $('#lastSyncLabel'),
     refreshDataBtn: $('#refreshDataBtn'),
-    changeAccessKeyBtn: $('#changeAccessKeyBtn')
+    changeAccessKeyBtn: $('#changeAccessKeyBtn'),
+    taskFilterRow: $('#taskFilterRow'),
+    openTaskModalBtn: $('#openTaskModalBtn'),
+    meetingList: $('#meetingList'),
+    meetingSummary: $('#meetingSummary'),
+    meetingModal: $('#meetingModal'),
+    meetingForm: $('#meetingForm'),
+    meetingId: $('#meetingId'),
+    meetingTitle: $('#meetingTitle'),
+    meetingDate: $('#meetingDate'),
+    meetingStartTime: $('#meetingStartTime'),
+    meetingEndTime: $('#meetingEndTime'),
+    meetingLocation: $('#meetingLocation'),
+    meetingProject: $('#meetingProject'),
+    meetingRecorder: $('#meetingRecorder'),
+    meetingAttendeePicker: $('#meetingAttendeePicker'),
+    meetingAgenda: $('#meetingAgenda'),
+    meetingDiscussion: $('#meetingDiscussion'),
+    meetingDecisions: $('#meetingDecisions'),
+    meetingActionList: $('#meetingActionList'),
+    addMeetingActionBtn: $('#addMeetingActionBtn'),
+    meetingModalTitle: $('#meetingModalTitle'),
+    deleteMeetingBtn: $('#deleteMeetingBtn'),
+    saveMeetingBtn: $('#saveMeetingBtn')
   };
 
   let tasks = [];
   let comments = [];
+  let meetings = [];
   let teamMembers = [];
   let currentUser = localStorage.getItem(USER_KEY) || '';
   let activeView = 'dashboard';
@@ -82,7 +110,9 @@
   let activeMineOnly = false;
   let isSyncing = false;
   let editingSubtasks = [];
+  let editingMeetingActions = [];
   const expandedTaskIds = new Set();
+  const expandedMeetingIds = new Set();
 
   function iso(date) {
     const d = new Date(date);
@@ -185,6 +215,56 @@
     };
   }
 
+
+  function normalizeMeetingActions(value) {
+    let source = value;
+    if (typeof source === 'string') {
+      try { source = JSON.parse(source); } catch (error) { source = []; }
+    }
+    if (!Array.isArray(source)) return [];
+    return source.slice(0, 30).map((item, index) => ({
+      id: String(item?.id || `MA${Date.now()}${index}${Math.random().toString(16).slice(2, 6)}`),
+      title: String(item?.title || '').slice(0, 160),
+      owner: String(item?.owner || ''),
+      dueDate: String(item?.dueDate || '').slice(0, 10),
+      completed: item?.completed === true || String(item?.completed).toLowerCase() === 'true'
+    })).filter(item => item.title || item.owner || item.dueDate);
+  }
+
+  function normalizeMeeting(meeting = {}) {
+    let attendees = meeting.attendees;
+    if (typeof attendees === 'string') {
+      try { attendees = JSON.parse(attendees); } catch (error) { attendees = attendees.split(','); }
+    }
+    if (!Array.isArray(attendees)) attendees = [];
+    return {
+      id: String(meeting.id || ''),
+      title: String(meeting.title || ''),
+      date: String(meeting.date || iso(new Date())).slice(0, 10),
+      startTime: String(meeting.startTime || '').slice(0, 5),
+      endTime: String(meeting.endTime || '').slice(0, 5),
+      location: String(meeting.location || ''),
+      project: String(meeting.project || ''),
+      attendees: [...new Set(attendees.map(value => String(value || '').trim()).filter(Boolean))],
+      recorder: String(meeting.recorder || ''),
+      agenda: String(meeting.agenda || ''),
+      discussion: String(meeting.discussion || ''),
+      decisions: String(meeting.decisions || ''),
+      actionItems: normalizeMeetingActions(meeting.actionItems),
+      createdAt: String(meeting.createdAt || ''),
+      updatedAt: String(meeting.updatedAt || '')
+    };
+  }
+
+  function newMeetingAction() {
+    return { id: `MA${Date.now()}${Math.random().toString(16).slice(2, 7)}`, title: '', owner: currentUser || '', dueDate: '', completed: false };
+  }
+
+  function meetingActionStats(meeting) {
+    const items = normalizeMeetingActions(meeting.actionItems);
+    return { total: items.length, completed: items.filter(item => item.completed).length };
+  }
+
   function commentsForTask(taskId) {
     return comments
       .filter(comment => comment.taskId === taskId)
@@ -207,6 +287,7 @@
       if (cached && Array.isArray(cached.tasks)) {
         tasks = cached.tasks.map(normalizeTask);
         comments = Array.isArray(cached.comments) ? cached.comments.map(normalizeComment) : [];
+        meetings = Array.isArray(cached.meetings) ? cached.meetings.map(normalizeMeeting) : [];
         teamMembers = Array.isArray(cached.members) ? cached.members : [];
         return true;
       }
@@ -215,6 +296,7 @@
     }
     tasks = sampleTasks();
     comments = [];
+    meetings = [];
     teamMembers = [
       { name: '김마케팅', position: '프로', team: '마케팅팀', active: true },
       { name: '박디자인', position: '프로', team: '마케팅팀', active: true },
@@ -224,19 +306,66 @@
   }
 
   function writeCache() {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ tasks, comments, members: teamMembers, savedAt: new Date().toISOString() }));
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ tasks, comments, meetings, members: teamMembers, savedAt: new Date().toISOString() }));
   }
 
   function escapeHTML(value = '') {
     return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
   }
-  function initials(name) { return String(name || '나').slice(0, 2); }
+  function initials(name) {
+    const value = String(name || '나').trim();
+    const compact = value.replace(/\s+/g, '');
+    if (!compact) return '나';
+    if (/[가-힣]/.test(compact)) return compact.slice(-2);
+    const words = value.split(/\s+/).filter(Boolean);
+    if (words.length > 1) return words.slice(0, 2).map(word => word.charAt(0)).join('').toUpperCase();
+    return compact.slice(0, 2).toUpperCase();
+  }
   function formatShort(value) { const d = dateOnly(value); return `${d.getMonth() + 1}.${String(d.getDate()).padStart(2, '0')}`; }
   function statusBadge(task) { const st = actualStatus(task); return `<span class="badge ${st}">${STATUS[st].label}</span>`; }
   function priorityBadge(task) { return ['urgent', 'high'].includes(task.priority) ? `<span class="badge priority-${task.priority}">${PRIORITY[task.priority]}</span>` : ''; }
 
   function memberInfo(name) {
     return teamMembers.find(member => member.name === name) || {};
+  }
+
+  function fallbackAvatarColor(name) {
+    const value = String(name || '').trim();
+    if (!value) return DEFAULT_AVATAR_COLOR;
+    let hash = 0;
+    for (const character of value) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
+    return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
+  }
+
+  function normalizeColor(value, fallbackName = '') {
+    const color = String(value || '').trim();
+    return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : fallbackAvatarColor(fallbackName);
+  }
+
+  function avatarColor(name) {
+    return normalizeColor(memberInfo(name)?.avatarColor, name);
+  }
+
+  function avatarStyle(name) {
+    return ` style="--avatar-color:${escapeHTML(avatarColor(name))}"`;
+  }
+
+  function avatarMarkup(name, className = 'avatar') {
+    return `<div class="${className}"${avatarStyle(name)}>${escapeHTML(initials(name))}</div>`;
+  }
+
+  function renderAvatarPicker() {
+    if (!els.avatarPicker) return;
+    els.avatarPicker.innerHTML = `
+      <div class="avatar-picker-head">
+        <strong>프로필 아이콘</strong>
+        <span>이름 뒤 두 글자가 자동 표시됩니다.</span>
+      </div>
+      <div class="avatar-color-grid">
+        ${AVATAR_PALETTE.map(color => `
+          <button type="button" class="avatar-color-swatch${avatarColor(currentUser) === color ? ' active' : ''}"
+            data-avatar-color="${color}" style="--swatch:${color}" aria-label="아이콘 색상 ${color}"></button>`).join('')}
+      </div>`;
   }
 
   function subtaskStats(task) {
@@ -331,7 +460,7 @@
     })));
   }
 
-  function mutationApplied(action, payload, remoteTasks, remoteComments) {
+  function mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers = [], remoteMeetings = []) {
     if (action === 'deleteTask') {
       return !remoteTasks.some(task => task.id === payload.id)
         && !remoteComments.some(comment => comment.taskId === payload.id);
@@ -341,6 +470,20 @@
       return Boolean(saved && saved.taskId === payload.taskId && saved.author === payload.author && saved.content === payload.content);
     }
     if (action === 'deleteComment') return !remoteComments.some(comment => comment.id === payload.id);
+    if (action === 'saveMemberProfile') {
+      const savedMember = remoteMembers.find(member => member.name === payload.name);
+      return Boolean(savedMember && normalizeColor(savedMember.avatarColor, savedMember.name) === normalizeColor(payload.avatarColor, payload.name));
+    }
+    if (action === 'deleteMeeting') return !remoteMeetings.some(meeting => meeting.id === payload.id);
+    if (action === 'saveMeeting') {
+      const savedMeeting = remoteMeetings.find(meeting => meeting.id === payload.id);
+      if (!savedMeeting) return false;
+      return savedMeeting.title === payload.title
+        && savedMeeting.date === payload.date
+        && savedMeeting.recorder === payload.recorder
+        && JSON.stringify(savedMeeting.attendees) === JSON.stringify(payload.attendees)
+        && JSON.stringify(normalizeMeetingActions(savedMeeting.actionItems)) === JSON.stringify(normalizeMeetingActions(payload.actionItems));
+    }
     if (action !== 'saveTask') return true;
     const saved = remoteTasks.find(task => task.id === payload.id);
     if (!saved) return false;
@@ -436,6 +579,7 @@
       assertApiVersion(response);
       tasks = Array.isArray(response.tasks) ? response.tasks.map(normalizeTask) : [];
       comments = Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [];
+      meetings = Array.isArray(response.meetings) ? response.meetings.map(normalizeMeeting) : [];
       teamMembers = Array.isArray(response.members) ? response.members.filter(member => member.active !== false) : [];
       ensureCurrentUser();
       writeCache();
@@ -468,14 +612,17 @@
         assertApiVersion(response);
         const remoteTasks = Array.isArray(response.tasks) ? response.tasks.map(normalizeTask) : [];
         const remoteComments = Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [];
-        if (!mutationApplied(action, payload, remoteTasks, remoteComments)) {
+        const remoteMeetings = Array.isArray(response.meetings) ? response.meetings.map(normalizeMeeting) : [];
+        const remoteMembers = Array.isArray(response.members) ? response.members.filter(member => member.active !== false) : [];
+        if (!mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers, remoteMeetings)) {
           lastError = new Error('저장 내용이 아직 Google Sheets에 반영되지 않았습니다.');
           continue;
         }
 
         tasks = remoteTasks;
         comments = remoteComments;
-        teamMembers = Array.isArray(response.members) ? response.members.filter(member => member.active !== false) : [];
+        meetings = remoteMeetings;
+        teamMembers = remoteMembers;
         ensureCurrentUser();
         writeCache();
         renderAll();
@@ -493,7 +640,8 @@
   function memberNames() {
     const names = teamMembers.map(member => String(member.name || '').trim()).filter(Boolean);
     const taskNames = tasks.map(task => task.assignee).filter(Boolean);
-    return [...new Set([...names, ...taskNames])];
+    const meetingNames = meetings.flatMap(meeting => [meeting.recorder, ...meeting.attendees, ...normalizeMeetingActions(meeting.actionItems).map(item => item.owner)]).filter(Boolean);
+    return [...new Set([...names, ...taskNames, ...meetingNames])];
   }
 
   function ensureCurrentUser() {
@@ -511,6 +659,8 @@
     els.profileName.textContent = currentUser || '사용자 선택';
     els.profileTeam.textContent = [member?.position, member?.team].filter(Boolean).join(' · ') || '팀 공용';
     els.profileAvatar.textContent = initials(currentUser);
+    els.profileAvatar.style.setProperty('--avatar-color', avatarColor(currentUser));
+    renderAvatarPicker();
   }
 
   function getFilteredTasks({ ignorePeriod = false } = {}) {
@@ -540,6 +690,7 @@
     renderDashboard();
     renderTaskList();
     renderCalendar();
+    renderMeetingList();
     updateProfile();
   }
 
@@ -556,6 +707,12 @@
     els.taskAssignee.value = names.includes(selectedTaskAssignee) ? selectedTaskAssignee : (currentUser || names[0] || '');
     els.currentUserSelect.innerHTML = options || '<option value="">등록된 팀원 없음</option>';
     els.currentUserSelect.value = names.includes(selectedCurrentUser) ? selectedCurrentUser : (currentUser || names[0] || '');
+    if (els.meetingRecorder) {
+      const selectedRecorder = els.meetingRecorder.value || currentUser;
+      els.meetingRecorder.innerHTML = options || '<option value="">팀원을 먼저 등록하세요</option>';
+      els.meetingRecorder.value = names.includes(selectedRecorder) ? selectedRecorder : (currentUser || names[0] || '');
+    }
+    renderMeetingAttendeePicker();
 
     const projects = [...new Set(tasks.map(task => task.project).filter(Boolean))].sort();
     els.projectOptions.innerHTML = projects.map(project => `<option value="${escapeHTML(project)}"></option>`).join('');
@@ -644,7 +801,7 @@
       const due = mine.filter(task => actualStatus(task) !== 'completed' && between(task.end, today, weekEnd)).length;
       const delayed = mine.filter(task => actualStatus(task) === 'delayed').length;
       return `<tr>
-        <td><div class="team-person"><div class="avatar">${initials(name)}</div><div><strong>${escapeHTML(name)}</strong><span>${escapeHTML([memberInfo(name).position, memberInfo(name).team].filter(Boolean).join(' · '))}</span></div></div></td>
+        <td><div class="team-person">${avatarMarkup(name)}<div><strong>${escapeHTML(name)}</strong><span>${escapeHTML([memberInfo(name).position, memberInfo(name).team].filter(Boolean).join(' · '))}</span></div></div></td>
         <td>${before}</td><td class="metric-primary">${progress}</td><td>${due}</td><td class="${delayed ? 'metric-danger' : ''}">${delayed}</td>
       </tr>`;
     }).join('');
@@ -690,7 +847,7 @@
             <div><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} ${priorityBadge(task)}${detailsMeta ? ` · ${detailsMeta}` : ''}</span></div>
           </div>
         </td>
-        <td><div class="assignee-chip"><div class="avatar">${initials(task.assignee)}</div><div>${escapeHTML(task.assignee)}${memberInfo(task.assignee).position ? `<small>${escapeHTML(memberInfo(task.assignee).position)}</small>` : ''}</div></div></td>
+        <td><div class="assignee-chip">${avatarMarkup(task.assignee)}<div>${escapeHTML(task.assignee)}${memberInfo(task.assignee).position ? `<small>${escapeHTML(memberInfo(task.assignee).position)}</small>` : ''}</div></div></td>
         <td>${formatShort(task.start)} ~ ${formatShort(task.end)}</td>
         <td>${statusBadge(task)}</td><td><strong>${task.progress}%</strong></td>
         <td class="row-actions"><button class="row-action" data-open-task="${escapeHTML(task.id)}">수정</button></td>
@@ -723,7 +880,7 @@
               const author = memberInfo(comment.author);
               const canDelete = comment.author === currentUser;
               return `<article class="comment-item">
-                <div class="comment-avatar">${initials(comment.author)}</div>
+                ${avatarMarkup(comment.author, 'comment-avatar')}
                 <div class="comment-body">
                   <div class="comment-meta">
                     <div><strong>${escapeHTML(comment.author)}</strong>${author.position ? `<span>${escapeHTML(author.position)}</span>` : ''}</div>
@@ -736,7 +893,7 @@
             }).join('') : '<div class="comment-empty">첫 코멘트를 남겨보세요.</div>'}
           </div>
           <form class="comment-composer" data-comment-form="${escapeHTML(task.id)}">
-            <div class="comment-avatar composer-avatar">${initials(currentUser)}</div>
+            ${avatarMarkup(currentUser, 'comment-avatar composer-avatar')}
             <textarea name="comment" rows="1" maxlength="1000" placeholder="진행 상황이나 확인할 내용을 남겨주세요." aria-label="코멘트 입력"></textarea>
             <button type="submit">등록</button>
           </form>
@@ -781,6 +938,208 @@
     }).join('');
   }
 
+
+  function meetingTimeLabel(meeting) {
+    if (!meeting.startTime && !meeting.endTime) return '';
+    if (meeting.startTime && meeting.endTime) return `${meeting.startTime}–${meeting.endTime}`;
+    return meeting.startTime || meeting.endTime;
+  }
+
+  function formatMeetingDate(value) {
+    const date = dateOnly(value);
+    return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')} (${['일','월','화','수','목','금','토'][date.getDay()]})`;
+  }
+
+  function meetingSearchResults() {
+    const query = els.globalSearch.value.trim().toLowerCase();
+    return meetings.filter(meeting => {
+      if (!query) return true;
+      const actionText = normalizeMeetingActions(meeting.actionItems).map(item => `${item.title} ${item.owner}`).join(' ');
+      return [meeting.title, meeting.project, meeting.location, meeting.recorder, meeting.attendees.join(' '), meeting.agenda, meeting.discussion, meeting.decisions, actionText]
+        .some(value => String(value || '').toLowerCase().includes(query));
+    }).sort((a, b) => `${b.date} ${b.startTime}`.localeCompare(`${a.date} ${a.startTime}`));
+  }
+
+  function renderMeetingList() {
+    if (!els.meetingList) return;
+    const filtered = meetingSearchResults();
+    const thisMonth = meetings.filter(meeting => {
+      const date = dateOnly(meeting.date);
+      const now = new Date();
+      return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+    }).length;
+    const openActions = meetings.flatMap(meeting => normalizeMeetingActions(meeting.actionItems)).filter(item => !item.completed).length;
+    els.meetingSummary.innerHTML = `<span><strong>${meetings.length}</strong> 전체</span><span><strong>${thisMonth}</strong> 이번 달</span><span><strong>${openActions}</strong> 미완료 후속 업무</span>`;
+
+    if (!filtered.length) {
+      els.meetingList.innerHTML = `<div class="meeting-empty"><div class="meeting-empty-icon">✦</div><strong>등록된 회의록이 없습니다.</strong><span>오른쪽 위 ‘새 회의록’에서 첫 기록을 남겨보세요.</span></div>`;
+      return;
+    }
+
+    els.meetingList.innerHTML = filtered.map(meeting => {
+      const expanded = expandedMeetingIds.has(meeting.id);
+      const stats = meetingActionStats(meeting);
+      const time = meetingTimeLabel(meeting);
+      const attendeePreview = meeting.attendees.slice(0, 5).map(name => avatarMarkup(name, 'meeting-avatar')).join('');
+      const moreCount = Math.max(0, meeting.attendees.length - 5);
+      const detail = expanded ? `
+        <div class="meeting-detail">
+          ${meeting.agenda ? `<section><span>안건</span><p>${escapeHTML(meeting.agenda).replace(/\n/g, '<br>')}</p></section>` : ''}
+          <section><span>논의 내용</span><p>${escapeHTML(meeting.discussion).replace(/\n/g, '<br>')}</p></section>
+          ${meeting.decisions ? `<section class="decision-section"><span>결정 사항</span><p>${escapeHTML(meeting.decisions).replace(/\n/g, '<br>')}</p></section>` : ''}
+          <section class="meeting-action-view">
+            <div class="meeting-action-view-head"><span>후속 업무</span><strong>${stats.completed}/${stats.total} 완료</strong></div>
+            ${stats.total ? normalizeMeetingActions(meeting.actionItems).map(item => `<div class="meeting-action-view-item ${item.completed ? 'completed' : ''}">
+              <button type="button" data-meeting-action-toggle="${escapeHTML(meeting.id)}" data-meeting-action-id="${escapeHTML(item.id)}" data-meeting-action-completed="${item.completed}" aria-label="후속 업무 완료 상태 변경"><i></i></button>
+              <div><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.owner || '담당자 미정')}${item.dueDate ? ` · ${formatShort(item.dueDate)}` : ''}</span></div>
+            </div>`).join('') : '<div class="meeting-action-empty">등록된 후속 업무가 없습니다.</div>'}
+          </section>
+        </div>` : '';
+      return `<article class="meeting-card ${expanded ? 'expanded' : ''}">
+        <button type="button" class="meeting-card-main" data-toggle-meeting="${escapeHTML(meeting.id)}" aria-expanded="${expanded}">
+          <div class="meeting-date-block"><strong>${String(dateOnly(meeting.date).getDate()).padStart(2, '0')}</strong><span>${dateOnly(meeting.date).getMonth() + 1}월</span></div>
+          <div class="meeting-card-copy">
+            <div class="meeting-card-title"><h3>${escapeHTML(meeting.title)}</h3>${meeting.project ? `<span>${escapeHTML(meeting.project)}</span>` : ''}</div>
+            <p>${formatMeetingDate(meeting.date)}${time ? ` · ${escapeHTML(time)}` : ''}${meeting.location ? ` · ${escapeHTML(meeting.location)}` : ''}</p>
+            <div class="meeting-card-bottom"><div class="meeting-attendees">${attendeePreview}${moreCount ? `<b>+${moreCount}</b>` : ''}<span>${meeting.attendees.length}명 참석</span></div>${stats.total ? `<div class="meeting-action-badge">후속 업무 ${stats.completed}/${stats.total}</div>` : ''}</div>
+          </div>
+          <span class="meeting-expand-icon">${expanded ? '−' : '+'}</span>
+        </button>
+        <div class="meeting-card-actions"><button type="button" data-edit-meeting="${escapeHTML(meeting.id)}">수정</button></div>
+        ${detail}
+      </article>`;
+    }).join('');
+  }
+
+  function renderMeetingAttendeePicker(selected = null) {
+    if (!els.meetingAttendeePicker) return;
+    const selectedNames = selected || new Set($$('[data-meeting-attendee]:checked', els.meetingAttendeePicker).map(input => input.value));
+    const names = memberNames();
+    els.meetingAttendeePicker.innerHTML = names.map(name => {
+      const checked = selectedNames instanceof Set ? selectedNames.has(name) : Array.isArray(selectedNames) && selectedNames.includes(name);
+      return `<label class="attendee-chip ${checked ? 'selected' : ''}"><input type="checkbox" data-meeting-attendee value="${escapeHTML(name)}" ${checked ? 'checked' : ''}>${avatarMarkup(name, 'attendee-avatar')}<span>${escapeHTML(name)}</span></label>`;
+    }).join('') || '<div class="meeting-action-empty">Members 시트에 팀원을 먼저 등록하세요.</div>';
+  }
+
+  function renderMeetingActionEditor() {
+    if (!els.meetingActionList) return;
+    if (!editingMeetingActions.length) {
+      els.meetingActionList.innerHTML = `<button type="button" class="meeting-action-empty-add" data-add-meeting-action-empty><span>＋</span><div><strong>첫 후속 업무 추가</strong><small>회의에서 정해진 담당 업무와 기한을 기록하세요.</small></div></button>`;
+      return;
+    }
+    const names = memberNames();
+    const options = names.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
+    els.meetingActionList.innerHTML = editingMeetingActions.map((item, index) => `<div class="meeting-action-editor-row ${item.completed ? 'completed' : ''}">
+      <button type="button" class="meeting-action-check ${item.completed ? 'checked' : ''}" data-meeting-action-check="${index}" aria-label="완료 상태 변경"><i></i></button>
+      <input data-meeting-action-field="title" data-meeting-action-index="${index}" maxlength="160" value="${escapeHTML(item.title)}" placeholder="후속 업무 입력">
+      <select data-meeting-action-field="owner" data-meeting-action-index="${index}" aria-label="담당자"><option value="">담당자</option>${options}</select>
+      <input data-meeting-action-field="dueDate" data-meeting-action-index="${index}" type="date" value="${escapeHTML(item.dueDate)}" aria-label="마감일">
+      <button type="button" class="remove-subtask-button" data-remove-meeting-action="${index}" aria-label="후속 업무 삭제">×</button>
+    </div>`).join('');
+    editingMeetingActions.forEach((item, index) => {
+      const select = els.meetingActionList.querySelector(`select[data-meeting-action-index="${index}"]`);
+      if (select) select.value = item.owner || '';
+    });
+  }
+
+  function openMeetingModal(meeting = null) {
+    els.meetingForm.reset();
+    els.meetingId.value = meeting?.id || '';
+    els.meetingTitle.value = meeting?.title || '';
+    els.meetingDate.value = meeting?.date || iso(new Date());
+    els.meetingStartTime.value = meeting?.startTime || '';
+    els.meetingEndTime.value = meeting?.endTime || '';
+    els.meetingLocation.value = meeting?.location || '';
+    els.meetingProject.value = meeting?.project || '';
+    els.meetingRecorder.value = meeting?.recorder || currentUser || memberNames()[0] || '';
+    els.meetingAgenda.value = meeting?.agenda || '';
+    els.meetingDiscussion.value = meeting?.discussion || '';
+    els.meetingDecisions.value = meeting?.decisions || '';
+    renderMeetingAttendeePicker(meeting?.attendees || (currentUser ? [currentUser] : []));
+    editingMeetingActions = normalizeMeetingActions(meeting?.actionItems || []).map(item => ({ ...item }));
+    renderMeetingActionEditor();
+    els.meetingModalTitle.textContent = meeting ? '회의록 수정' : '새 회의록';
+    els.deleteMeetingBtn.classList.toggle('hidden', !meeting);
+    els.meetingModal.classList.add('open');
+    els.meetingModal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => els.meetingTitle.focus(), 80);
+  }
+
+  function closeMeetingModal() {
+    els.meetingModal.classList.remove('open');
+    els.meetingModal.setAttribute('aria-hidden', 'true');
+  }
+
+  async function submitMeeting(event) {
+    event.preventDefault();
+    const attendees = $$('[data-meeting-attendee]:checked', els.meetingAttendeePicker).map(input => input.value);
+    if (!attendees.length) return showToast('참석자를 한 명 이상 선택하세요.');
+    if (els.meetingStartTime.value && els.meetingEndTime.value && els.meetingStartTime.value > els.meetingEndTime.value) return showToast('종료 시간은 시작 시간보다 빠를 수 없습니다.');
+    const invalidAction = editingMeetingActions.find(item => !item.title.trim() || !item.owner || !/^\d{4}-\d{2}-\d{2}$/.test(item.dueDate));
+    if (invalidAction) return showToast('후속 업무의 내용, 담당자, 마감일을 모두 입력하세요.');
+    const payload = {
+      id: els.meetingId.value || `M${Date.now()}${Math.random().toString(16).slice(2, 8)}`,
+      title: els.meetingTitle.value.trim(), date: els.meetingDate.value,
+      startTime: els.meetingStartTime.value, endTime: els.meetingEndTime.value,
+      location: els.meetingLocation.value.trim(), project: els.meetingProject.value.trim(),
+      attendees, recorder: els.meetingRecorder.value,
+      agenda: els.meetingAgenda.value.trim(), discussion: els.meetingDiscussion.value.trim(), decisions: els.meetingDecisions.value.trim(),
+      actionItems: editingMeetingActions.map(item => ({ ...item, title: item.title.trim() }))
+    };
+    const isEditing = Boolean(els.meetingId.value);
+    els.saveMeetingBtn.disabled = true;
+    els.deleteMeetingBtn.disabled = true;
+    try {
+      await mutateAndRefresh('saveMeeting', payload, isEditing ? '회의록을 수정했습니다.' : '새 회의록을 저장했습니다.');
+      closeMeetingModal();
+      switchView('meetings');
+    } catch (error) {
+      console.error(error);
+      setConnectionState('error', '회의록 저장 확인 필요', error.message);
+      showToast(error.message);
+    } finally {
+      els.saveMeetingBtn.disabled = false;
+      els.deleteMeetingBtn.disabled = false;
+    }
+  }
+
+  async function deleteMeeting() {
+    const id = els.meetingId.value;
+    if (!id || !confirm('이 회의록을 삭제할까요?')) return;
+    els.saveMeetingBtn.disabled = true;
+    els.deleteMeetingBtn.disabled = true;
+    try {
+      await mutateAndRefresh('deleteMeeting', { id }, '회의록을 삭제했습니다.');
+      expandedMeetingIds.delete(id);
+      closeMeetingModal();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message);
+    } finally {
+      els.saveMeetingBtn.disabled = false;
+      els.deleteMeetingBtn.disabled = false;
+    }
+  }
+
+  async function toggleMeetingAction(meetingId, actionId, completed) {
+    const meeting = meetings.find(item => item.id === meetingId);
+    if (!meeting) return;
+    const action = meeting.actionItems.find(item => item.id === actionId);
+    if (!action) return;
+    const previous = normalizeMeeting(meeting);
+    action.completed = completed;
+    renderMeetingList();
+    try {
+      await mutateAndRefresh('saveMeeting', normalizeMeeting(meeting), '후속 업무 상태를 변경했습니다.');
+      expandedMeetingIds.add(meetingId);
+      renderMeetingList();
+    } catch (error) {
+      Object.assign(meeting, previous);
+      renderMeetingList();
+      showToast(error.message);
+    }
+  }
+
   function switchView(view) {
     activeView = view;
     activeMineOnly = view === 'mine';
@@ -792,10 +1151,17 @@
     } else if (view === 'calendar') {
       $('#calendarView').classList.add('active');
       els.pageTitle.textContent = '주간 일정';
+    } else if (view === 'meetings') {
+      $('#meetingView').classList.add('active');
+      els.pageTitle.textContent = '회의록';
     } else {
       $('#taskListView').classList.add('active');
       els.pageTitle.textContent = activeMineOnly ? '내 업무' : '전체 업무';
     }
+    const meetingMode = view === 'meetings';
+    els.taskFilterRow.classList.toggle('hidden', meetingMode);
+    els.openTaskModalBtn.textContent = meetingMode ? '＋ 새 회의록' : '＋ 새 업무';
+    els.globalSearch.placeholder = meetingMode ? '회의 제목, 참석자 검색' : '업무명, 담당자 검색';
     els.sidebar.classList.remove('open');
     renderAll();
   }
@@ -891,6 +1257,19 @@
     }
   }
 
+  async function saveMemberProfile(avatarHex) {
+    if (!currentUser) return showToast('왼쪽 아래에서 내 이름을 먼저 선택하세요.');
+    const payload = { name: currentUser, avatarColor: normalizeColor(avatarHex, currentUser) };
+    try {
+      await mutateAndRefresh('saveMemberProfile', payload, '아이콘 색상을 변경했습니다.');
+      renderAvatarPicker();
+    } catch (error) {
+      console.error(error);
+      setConnectionState('error', '프로필 저장 확인 필요', error.message);
+      showToast(error.message);
+    }
+  }
+
   async function addComment(taskId, content, submitButton) {
     const trimmed = String(content || '').trim();
     if (!currentUser) return showToast('왼쪽 아래에서 내 이름을 먼저 선택하세요.');
@@ -961,10 +1340,15 @@
   function bindEvents() {
     $$('.nav-item').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
     $('#mobileMenuBtn').addEventListener('click', () => els.sidebar.classList.toggle('open'));
-    $('#openTaskModalBtn').addEventListener('click', () => openTaskModal());
+    els.openTaskModalBtn.addEventListener('click', () => activeView === 'meetings' ? openMeetingModal() : openTaskModal());
     $('#closeTaskModalBtn').addEventListener('click', closeTaskModal);
     $('#cancelTaskBtn').addEventListener('click', closeTaskModal);
     els.taskModal.addEventListener('click', event => { if (event.target === els.taskModal) closeTaskModal(); });
+    $('#closeMeetingModalBtn').addEventListener('click', closeMeetingModal);
+    $('#cancelMeetingBtn').addEventListener('click', closeMeetingModal);
+    els.meetingModal.addEventListener('click', event => { if (event.target === els.meetingModal) closeMeetingModal(); });
+    els.meetingForm.addEventListener('submit', submitMeeting);
+    els.deleteMeetingBtn.addEventListener('click', deleteMeeting);
     els.taskForm.addEventListener('submit', submitTask);
     els.deleteTaskBtn.addEventListener('click', deleteTask);
     els.taskProgress.addEventListener('input', () => { els.progressValue.textContent = `${els.taskProgress.value}%`; });
@@ -1006,6 +1390,43 @@
       editingSubtasks.splice(Number(button.dataset.removeSubtask), 1);
       renderSubtaskEditor();
     });
+    els.addMeetingActionBtn.addEventListener('click', () => {
+      editingMeetingActions.push(newMeetingAction());
+      renderMeetingActionEditor();
+      els.meetingActionList.querySelector('.meeting-action-editor-row:last-child input[data-meeting-action-field="title"]')?.focus();
+    });
+    const updateMeetingAction = event => {
+      const index = Number(event.target.dataset.meetingActionIndex);
+      const field = event.target.dataset.meetingActionField;
+      if (!Number.isInteger(index) || !editingMeetingActions[index] || !field) return;
+      editingMeetingActions[index][field] = event.target.value;
+    };
+    els.meetingActionList.addEventListener('input', updateMeetingAction);
+    els.meetingActionList.addEventListener('change', updateMeetingAction);
+    els.meetingActionList.addEventListener('click', event => {
+      const check = event.target.closest('[data-meeting-action-check]');
+      if (check) {
+        const index = Number(check.dataset.meetingActionCheck);
+        if (editingMeetingActions[index]) editingMeetingActions[index].completed = !editingMeetingActions[index].completed;
+        renderMeetingActionEditor();
+        return;
+      }
+      if (event.target.closest('[data-add-meeting-action-empty]')) {
+        editingMeetingActions.push(newMeetingAction());
+        renderMeetingActionEditor();
+        els.meetingActionList.querySelector('input[data-meeting-action-field="title"]')?.focus();
+        return;
+      }
+      const remove = event.target.closest('[data-remove-meeting-action]');
+      if (remove) {
+        editingMeetingActions.splice(Number(remove.dataset.removeMeetingAction), 1);
+        renderMeetingActionEditor();
+      }
+    });
+    els.meetingAttendeePicker.addEventListener('change', event => {
+      const chip = event.target.closest('.attendee-chip');
+      if (chip) chip.classList.toggle('selected', event.target.checked);
+    });
     els.taskStatus.addEventListener('change', () => {
       if (els.taskStatus.value === 'completed') {
         els.taskProgress.value = 100;
@@ -1044,6 +1465,17 @@
       textarea.closest('form')?.requestSubmit();
     });
     document.addEventListener('click', event => {
+      const avatarSwatch = event.target.closest('[data-avatar-color]');
+      if (avatarSwatch) {
+        event.preventDefault();
+        event.stopPropagation();
+        saveMemberProfile(avatarSwatch.dataset.avatarColor);
+        els.avatarPicker?.classList.remove('open');
+        return;
+      }
+      if (els.avatarPicker && !event.target.closest('#avatarPicker') && !event.target.closest('#profileAvatar') && !event.target.closest('#openAvatarPickerBtn')) {
+        els.avatarPicker.classList.remove('open');
+      }
       const deleteCommentButton = event.target.closest('[data-delete-comment]');
       if (deleteCommentButton) {
         event.preventDefault();
@@ -1066,6 +1498,29 @@
         event.stopPropagation();
         const completed = checklist.dataset.subtaskCompleted === 'true';
         toggleSubtaskCompletion(checklist.dataset.subtaskCheck, Number(checklist.dataset.subtaskIndex), !completed);
+        return;
+      }
+      const meetingActionToggle = event.target.closest('[data-meeting-action-toggle]');
+      if (meetingActionToggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleMeetingAction(meetingActionToggle.dataset.meetingActionToggle, meetingActionToggle.dataset.meetingActionId, meetingActionToggle.dataset.meetingActionCompleted !== 'true');
+        return;
+      }
+      const editMeetingButton = event.target.closest('[data-edit-meeting]');
+      if (editMeetingButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        const meeting = meetings.find(item => item.id === editMeetingButton.dataset.editMeeting);
+        if (meeting) openMeetingModal(meeting);
+        return;
+      }
+      const meetingToggle = event.target.closest('[data-toggle-meeting]');
+      if (meetingToggle) {
+        event.preventDefault();
+        const id = meetingToggle.dataset.toggleMeeting;
+        if (expandedMeetingIds.has(id)) expandedMeetingIds.delete(id); else expandedMeetingIds.add(id);
+        renderMeetingList();
         return;
       }
       const taskTarget = event.target.closest('[data-open-task]');
@@ -1098,6 +1553,8 @@
       localStorage.setItem(USER_KEY, currentUser);
       renderAll();
     });
+    els.profileAvatar?.addEventListener('click', () => els.avatarPicker?.classList.toggle('open'));
+    els.openAvatarPickerBtn?.addEventListener('click', () => els.avatarPicker?.classList.toggle('open'));
     els.changeAccessKeyBtn.addEventListener('click', () => {
       const current = localStorage.getItem(TOKEN_KEY) || '';
       const next = window.prompt('새 팀 접속키를 입력하세요.', current) || '';
@@ -1105,7 +1562,7 @@
       localStorage.setItem(TOKEN_KEY, next.trim());
       loadRemoteData();
     });
-    document.addEventListener('keydown', event => { if (event.key === 'Escape') closeTaskModal(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeTaskModal(); closeMeetingModal(); } });
   }
 
   async function init() {

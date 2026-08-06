@@ -31,6 +31,9 @@
         <button class="nav-item" data-view="calendar">
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="15" rx="3"/><path d="M7.5 3v5M16.5 3v5M3.5 10h17"/></svg></span><span>주간 일정</span>
         </button>
+        <button class="nav-item" data-view="meetings">
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4.5h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z"/><path d="M7.5 8.5h9M7.5 12h6"/></svg></span><span>회의록</span>
+        </button>
       </nav>
 
       <div class="sidebar-footer">
@@ -43,6 +46,8 @@
         </div>
         <label class="sidebar-select-label" for="currentUserSelect">내 이름</label>
         <select class="sidebar-select" id="currentUserSelect" aria-label="현재 사용자 선택"></select>
+        <button class="text-button" id="openAvatarPickerBtn">프로필 아이콘 변경</button>
+        <div class="avatar-picker" id="avatarPicker" aria-label="아이콘 색상 선택"></div>
         <button class="text-button" id="changeAccessKeyBtn">팀 접속키 변경</button>
       </div>
     </aside>
@@ -74,7 +79,7 @@
         <button class="sync-button" id="refreshDataBtn" type="button">↻ 새로고침</button>
       </section>
 
-      <section class="filter-row">
+      <section class="filter-row" id="taskFilterRow">
         <div class="segmented" id="periodSegment">
           <button class="active" data-period="week">이번 주</button>
           <button data-period="month">이번 달</button>
@@ -209,6 +214,20 @@
           <div id="calendarGrid" class="calendar-grid"></div>
         </article>
       </section>
+
+      <section id="meetingView" class="view">
+        <article class="panel meeting-panel">
+          <div class="panel-header wrap-header meeting-view-header">
+            <div>
+              <span class="section-kicker">MINUTES</span>
+              <h2>회의록</h2>
+              <p class="panel-description">회의 내용과 결정 사항, 후속 업무를 한곳에 기록합니다.</p>
+            </div>
+            <div class="meeting-summary" id="meetingSummary"></div>
+          </div>
+          <div id="meetingList" class="meeting-list"></div>
+        </article>
+      </section>
     </main>
   </div>
 
@@ -270,11 +289,17 @@
           </label>
           <section class="subtask-section full-field" aria-labelledby="subtaskSectionTitle">
             <div class="subtask-section-head">
-              <div>
-                <span class="subtask-label" id="subtaskSectionTitle">세부 일정 체크리스트</span>
-                <p>큰 업무 안에 단계별 마감일을 추가하세요.</p>
+              <div class="subtask-heading-copy">
+                <div class="subtask-heading-line">
+                  <span class="subtask-label" id="subtaskSectionTitle">세부 일정</span>
+                  <span class="subtask-count" id="subtaskEditorCount">0개</span>
+                </div>
+                <p>단계별 마감일을 체크리스트로 관리합니다.</p>
               </div>
-              <button type="button" class="add-subtask-button" id="addSubtaskBtn">＋ 세부 일정 추가</button>
+              <button type="button" class="add-subtask-button" id="addSubtaskBtn" aria-label="세부 일정 추가">
+                <span class="add-subtask-icon" aria-hidden="true">＋</span>
+                <span>추가</span>
+              </button>
             </div>
             <div class="subtask-editor-list" id="subtaskEditorList"></div>
           </section>
@@ -292,6 +317,87 @@
           <div class="action-spacer"></div>
           <button type="button" class="secondary-button" id="cancelTaskBtn">취소</button>
           <button type="submit" class="primary-button" id="saveTaskBtn">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+
+  <div class="modal-backdrop" id="meetingModal" aria-hidden="true">
+    <div class="modal meeting-modal" role="dialog" aria-modal="true" aria-labelledby="meetingModalTitle">
+      <div class="modal-header">
+        <div>
+          <span class="section-kicker">MINUTES</span>
+          <h2 id="meetingModalTitle">새 회의록</h2>
+        </div>
+        <button class="icon-button" id="closeMeetingModalBtn" aria-label="닫기">×</button>
+      </div>
+
+      <form id="meetingForm">
+        <input type="hidden" id="meetingId" />
+        <div class="form-grid">
+          <label class="full-field">
+            <span>회의 제목 *</span>
+            <input id="meetingTitle" required maxlength="100" placeholder="예: 수출바우처 영상 제작 주간 회의" />
+          </label>
+          <label>
+            <span>회의일 *</span>
+            <input id="meetingDate" type="date" required />
+          </label>
+          <div class="meeting-time-fields">
+            <label>
+              <span>시작 시간</span>
+              <input id="meetingStartTime" type="time" />
+            </label>
+            <label>
+              <span>종료 시간</span>
+              <input id="meetingEndTime" type="time" />
+            </label>
+          </div>
+          <label>
+            <span>장소·방식</span>
+            <input id="meetingLocation" maxlength="80" placeholder="예: 2층 회의실 / Google Meet" />
+          </label>
+          <label>
+            <span>관련 프로젝트</span>
+            <input id="meetingProject" list="projectOptions" maxlength="80" placeholder="예: 수출바우처 동영상 제작" />
+          </label>
+          <label>
+            <span>작성자 *</span>
+            <select id="meetingRecorder" required></select>
+          </label>
+          <fieldset class="full-field attendee-fieldset">
+            <legend>참석자 *</legend>
+            <div class="attendee-picker" id="meetingAttendeePicker"></div>
+          </fieldset>
+          <label class="full-field">
+            <span>안건</span>
+            <textarea id="meetingAgenda" rows="3" maxlength="1500" placeholder="논의할 안건을 항목별로 입력하세요."></textarea>
+          </label>
+          <label class="full-field">
+            <span>논의 내용 *</span>
+            <textarea id="meetingDiscussion" rows="7" maxlength="5000" required placeholder="주요 발언과 검토 내용을 정리하세요."></textarea>
+          </label>
+          <label class="full-field">
+            <span>결정 사항</span>
+            <textarea id="meetingDecisions" rows="4" maxlength="2500" placeholder="확정된 내용과 보류된 내용을 정리하세요."></textarea>
+          </label>
+          <section class="meeting-action-section full-field" aria-labelledby="meetingActionTitle">
+            <div class="meeting-action-head">
+              <div>
+                <span id="meetingActionTitle">후속 업무</span>
+                <p>담당자와 기한을 지정해 회의 후속 조치를 관리합니다.</p>
+              </div>
+              <button type="button" class="add-subtask-button" id="addMeetingActionBtn"><span class="add-subtask-icon">＋</span><span>추가</span></button>
+            </div>
+            <div id="meetingActionList" class="meeting-action-list"></div>
+          </section>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="danger-button hidden" id="deleteMeetingBtn">회의록 삭제</button>
+          <div class="action-spacer"></div>
+          <button type="button" class="secondary-button" id="cancelMeetingBtn">취소</button>
+          <button type="submit" class="primary-button" id="saveMeetingBtn">저장</button>
         </div>
       </form>
     </div>
