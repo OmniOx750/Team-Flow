@@ -2,7 +2,7 @@
   'use strict';
 
   const CONFIG = window.TEAM_FLOW_CONFIG || {};
-  const CACHE_KEY = 'teamFlowRemoteCacheV2';
+  const CACHE_KEY = 'teamFlowRemoteCacheV3';
   const USER_KEY = 'teamFlowCurrentUserV2';
   const TOKEN_KEY = 'teamFlowAccessTokenV2';
   const STATUS = {
@@ -13,6 +13,7 @@
     delayed: { label: '지연', color: '#e14a55' }
   };
   const PRIORITY = { low: '낮음', normal: '보통', high: '높음', urgent: '긴급' };
+  const REQUIRED_API_VERSION = '1.3.0';
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -52,6 +53,7 @@
     taskLink: $('#taskLink'),
     addSubtaskBtn: $('#addSubtaskBtn'),
     subtaskEditorList: $('#subtaskEditorList'),
+    subtaskEditorCount: $('#subtaskEditorCount'),
     taskModalTitle: $('#taskModalTitle'),
     deleteTaskBtn: $('#deleteTaskBtn'),
     saveTaskBtn: $('#saveTaskBtn'),
@@ -70,6 +72,7 @@
   };
 
   let tasks = [];
+  let comments = [];
   let teamMembers = [];
   let currentUser = localStorage.getItem(USER_KEY) || '';
   let activeView = 'dashboard';
@@ -172,11 +175,38 @@
     };
   }
 
+  function normalizeComment(comment = {}) {
+    return {
+      id: String(comment.id || ''),
+      taskId: String(comment.taskId || ''),
+      author: String(comment.author || ''),
+      content: String(comment.content || '').slice(0, 1000),
+      createdAt: String(comment.createdAt || '')
+    };
+  }
+
+  function commentsForTask(taskId) {
+    return comments
+      .filter(comment => comment.taskId === taskId)
+      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  }
+
+  function formatCommentTime(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const now = new Date();
+    const sameYear = date.getFullYear() === now.getFullYear();
+    const day = `${date.getMonth() + 1}.${String(date.getDate()).padStart(2, '0')}`;
+    const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    return `${sameYear ? day : `${date.getFullYear()}.${day}`} ${time}`;
+  }
+
   function readCache() {
     try {
       const cached = JSON.parse(localStorage.getItem(CACHE_KEY));
       if (cached && Array.isArray(cached.tasks)) {
         tasks = cached.tasks.map(normalizeTask);
+        comments = Array.isArray(cached.comments) ? cached.comments.map(normalizeComment) : [];
         teamMembers = Array.isArray(cached.members) ? cached.members : [];
         return true;
       }
@@ -184,6 +214,7 @@
       console.warn('캐시를 읽지 못했습니다.', error);
     }
     tasks = sampleTasks();
+    comments = [];
     teamMembers = [
       { name: '김마케팅', position: '프로', team: '마케팅팀', active: true },
       { name: '박디자인', position: '프로', team: '마케팅팀', active: true },
@@ -193,7 +224,7 @@
   }
 
   function writeCache() {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ tasks, members: teamMembers, savedAt: new Date().toISOString() }));
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ tasks, comments, members: teamMembers, savedAt: new Date().toISOString() }));
   }
 
   function escapeHTML(value = '') {
@@ -239,19 +270,34 @@
   }
 
   function renderSubtaskEditor() {
+    const completedCount = editingSubtasks.filter(item => item.completed).length;
+    if (els.subtaskEditorCount) {
+      els.subtaskEditorCount.textContent = editingSubtasks.length
+        ? `${completedCount}/${editingSubtasks.length} 완료`
+        : '0개';
+    }
+
     if (!editingSubtasks.length) {
-      els.subtaskEditorList.innerHTML = '<div class="subtask-empty">아직 세부 일정이 없습니다. 위의 ＋ 버튼으로 추가하세요.</div>';
+      els.subtaskEditorList.innerHTML = `
+        <button type="button" class="subtask-empty" data-add-subtask-empty>
+          <span class="subtask-empty-icon">＋</span>
+          <span><strong>첫 세부 일정 추가</strong><small>예: 8월 12일까지 1차 스크립트 완료</small></span>
+        </button>`;
       els.progressValue.textContent = `${els.taskProgress.value}%`;
       return;
     }
+
     els.subtaskEditorList.innerHTML = editingSubtasks.map((item, index) => `
       <div class="subtask-editor-row ${item.completed ? 'completed' : ''}">
         <label class="subtask-check" title="완료 여부">
           <input type="checkbox" data-subtask-field="completed" data-subtask-index="${index}" ${item.completed ? 'checked' : ''}>
           <span></span>
         </label>
-        <input class="subtask-title-input" data-subtask-field="title" data-subtask-index="${index}" maxlength="120" value="${escapeHTML(item.title)}" placeholder="예: 1차 스크립트 완료">
-        <input class="subtask-date-input" data-subtask-field="dueDate" data-subtask-index="${index}" type="date" value="${escapeHTML(item.dueDate)}">
+        <input class="subtask-title-input" data-subtask-field="title" data-subtask-index="${index}" maxlength="120" value="${escapeHTML(item.title)}" placeholder="세부 일정 입력">
+        <label class="subtask-date-wrap">
+          <span>마감</span>
+          <input class="subtask-date-input" data-subtask-field="dueDate" data-subtask-index="${index}" type="date" value="${escapeHTML(item.dueDate)}" aria-label="세부 일정 마감일">
+        </label>
         <button type="button" class="remove-subtask-button" data-remove-subtask="${index}" aria-label="세부 일정 삭제">×</button>
       </div>`).join('');
     syncProgressFromEditingSubtasks();
@@ -259,6 +305,52 @@
 
   function apiConfigured() {
     return /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/.test(String(CONFIG.API_URL || '')) && !/PASTE_|YOUR_/i.test(CONFIG.API_URL);
+  }
+
+  function compareVersions(a, b) {
+    const pa = String(a || '0').split('.').map(value => Number(value) || 0);
+    const pb = String(b || '0').split('.').map(value => Number(value) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+      const diff = (pa[i] || 0) - (pb[i] || 0);
+      if (diff) return diff;
+    }
+    return 0;
+  }
+
+  function assertApiVersion(response) {
+    if (compareVersions(response?.version, REQUIRED_API_VERSION) < 0) {
+      throw new Error(`Apps Script가 이전 버전(${response?.version || '확인 불가'})입니다. Code.gs를 교체한 뒤 새 버전으로 다시 배포하세요.`);
+    }
+  }
+
+  function normalizedSubtaskSignature(items) {
+    return JSON.stringify(normalizeSubtasks(items).map(item => ({
+      id: item.id,
+      title: item.title.trim(),
+      dueDate: item.dueDate,
+      completed: Boolean(item.completed)
+    })));
+  }
+
+  function mutationApplied(action, payload, remoteTasks, remoteComments) {
+    if (action === 'deleteTask') {
+      return !remoteTasks.some(task => task.id === payload.id)
+        && !remoteComments.some(comment => comment.taskId === payload.id);
+    }
+    if (action === 'addComment') {
+      const saved = remoteComments.find(comment => comment.id === payload.id);
+      return Boolean(saved && saved.taskId === payload.taskId && saved.author === payload.author && saved.content === payload.content);
+    }
+    if (action === 'deleteComment') return !remoteComments.some(comment => comment.id === payload.id);
+    if (action !== 'saveTask') return true;
+    const saved = remoteTasks.find(task => task.id === payload.id);
+    if (!saved) return false;
+    return saved.title === payload.title
+      && saved.project === payload.project
+      && saved.assignee === payload.assignee
+      && saved.start === payload.start
+      && saved.end === payload.end
+      && normalizedSubtaskSignature(saved.subtasks) === normalizedSubtaskSignature(payload.subtasks);
   }
 
   function getAccessToken({ ask = false } = {}) {
@@ -342,7 +434,9 @@
     if (!silent) setConnectionState('loading', 'Google Sheets 동기화 중', '팀 공용 업무를 불러오고 있습니다.');
     try {
       const response = await jsonpRequest('getData');
+      assertApiVersion(response);
       tasks = Array.isArray(response.tasks) ? response.tasks.map(normalizeTask) : [];
+      comments = Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [];
       teamMembers = Array.isArray(response.members) ? response.members.filter(member => member.active !== false) : [];
       ensureCurrentUser();
       writeCache();
@@ -361,29 +455,40 @@
   }
 
   async function mutateAndRefresh(action, payload, successMessage) {
-    setConnectionState('loading', 'Google Sheets 저장 중', '변경 사항을 팀 공용 시트에 반영하고 있습니다.');
+    setConnectionState('loading', 'Google Sheets 저장 중', '저장 결과를 확인하고 있습니다.');
     await postMutation(action, payload);
 
-    const attempts = Number(CONFIG.SYNC_POLL_ATTEMPTS) || 7;
-    const interval = Number(CONFIG.SYNC_POLL_INTERVAL_MS) || 700;
+    const attempts = Number(CONFIG.SYNC_POLL_ATTEMPTS) || 12;
+    const interval = Number(CONFIG.SYNC_POLL_INTERVAL_MS) || 800;
     let lastError = null;
+
     for (let i = 0; i < attempts; i += 1) {
       await sleep(interval);
       try {
         const response = await jsonpRequest('getData');
-        tasks = Array.isArray(response.tasks) ? response.tasks.map(normalizeTask) : [];
+        assertApiVersion(response);
+        const remoteTasks = Array.isArray(response.tasks) ? response.tasks.map(normalizeTask) : [];
+        const remoteComments = Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [];
+        if (!mutationApplied(action, payload, remoteTasks, remoteComments)) {
+          lastError = new Error('저장 내용이 아직 Google Sheets에 반영되지 않았습니다.');
+          continue;
+        }
+
+        tasks = remoteTasks;
+        comments = remoteComments;
         teamMembers = Array.isArray(response.members) ? response.members.filter(member => member.active !== false) : [];
         ensureCurrentUser();
         writeCache();
         renderAll();
-        setConnectionState('connected', 'Google Sheets 연결됨', '방금 변경 사항을 동기화했습니다.');
+        setConnectionState('connected', 'Google Sheets 연결됨', '방금 변경 사항을 저장했습니다.');
         showToast(successMessage);
         return;
       } catch (error) {
         lastError = error;
       }
     }
-    throw lastError || new Error('저장 후 동기화하지 못했습니다. 새로고침으로 확인하세요.');
+
+    throw lastError || new Error('저장 내용을 확인하지 못했습니다. Apps Script 새 버전 배포 여부를 확인하세요.');
   }
 
   function memberNames() {
@@ -425,7 +530,8 @@
       if (assignee !== 'all' && task.assignee !== assignee) return false;
       if (status !== 'all' && actualStatus(task) !== status) return false;
       const subtaskText = normalizeSubtasks(task.subtasks).map(item => item.title).join(' ');
-      if (query && ![task.title, task.project, task.assignee, task.description, subtaskText].some(value => (value || '').toLowerCase().includes(query))) return false;
+      const commentText = commentsForTask(task.id).map(comment => `${comment.author} ${comment.content}`).join(' ');
+      if (query && ![task.title, task.project, task.assignee, task.description, subtaskText, commentText].some(value => (value || '').toLowerCase().includes(query))) return false;
       return true;
     });
   }
@@ -568,14 +674,21 @@
       els.taskListContainer.innerHTML = '<div class="empty-state">조건에 맞는 업무가 없습니다.</div>';
       return;
     }
+
     const rows = filtered.sort((a, b) => dateOnly(a.end) - dateOnly(b.end)).map(task => {
       const stats = subtaskStats(task);
+      const taskComments = commentsForTask(task.id);
       const expanded = expandedTaskIds.has(task.id);
+      const detailsMeta = [
+        stats.total ? `체크리스트 ${stats.completed}/${stats.total}` : '',
+        taskComments.length ? `댓글 ${taskComments.length}` : ''
+      ].filter(Boolean).join(' · ');
+
       const mainRow = `<tr class="task-main-row" data-open-task="${escapeHTML(task.id)}">
         <td class="task-title-cell">
           <div class="task-title-wrap">
-            ${stats.total ? `<button type="button" class="subtask-toggle ${expanded ? 'open' : ''}" data-toggle-subtasks="${escapeHTML(task.id)}" aria-expanded="${expanded}" aria-label="세부 일정 ${expanded ? '접기' : '펼치기'}">${expanded ? '−' : '+'}</button>` : '<span class="subtask-toggle-placeholder"></span>'}
-            <div><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} ${priorityBadge(task)}${stats.total ? ` · 체크리스트 ${stats.completed}/${stats.total}` : ''}</span></div>
+            <button type="button" class="subtask-toggle ${expanded ? 'open' : ''}" data-toggle-subtasks="${escapeHTML(task.id)}" aria-expanded="${expanded}" aria-label="업무 상세 ${expanded ? '접기' : '펼치기'}">${expanded ? '−' : '+'}</button>
+            <div><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} ${priorityBadge(task)}${detailsMeta ? ` · ${detailsMeta}` : ''}</span></div>
           </div>
         </td>
         <td><div class="assignee-chip"><div class="avatar">${initials(task.assignee)}</div><div>${escapeHTML(task.assignee)}${memberInfo(task.assignee).position ? `<small>${escapeHTML(memberInfo(task.assignee).position)}</small>` : ''}</div></div></td>
@@ -583,9 +696,11 @@
         <td>${statusBadge(task)}</td><td><strong>${task.progress}%</strong></td>
         <td class="row-actions"><button class="row-action" data-open-task="${escapeHTML(task.id)}">수정</button></td>
       </tr>`;
-      if (!stats.total || !expanded) return mainRow;
-      const detailRow = `<tr class="subtask-detail-row"><td colspan="6">
-        <div class="subtask-checklist-view">
+
+      if (!expanded) return mainRow;
+
+      const checklistHtml = stats.total ? `
+        <section class="detail-section checklist-detail-section">
           <div class="subtask-checklist-head"><strong>세부 일정</strong><span>${stats.completed}/${stats.total} 완료</span></div>
           ${normalizeSubtasks(task.subtasks).map((item, index) => {
             const overdue = !item.completed && item.dueDate && dateOnly(item.dueDate) < dateOnly(iso(new Date()));
@@ -597,10 +712,44 @@
               ${overdue ? '<b>지연</b>' : ''}
             </label>`;
           }).join('')}
-        </div>
+        </section>` : '';
+
+      const commentsHtml = `
+        <section class="detail-section comment-section">
+          <div class="comment-section-head">
+            <div><strong>코멘트</strong><span>${taskComments.length}</span></div>
+            <small>현재 사용자 · ${escapeHTML(currentUser || '사용자 미선택')}</small>
+          </div>
+          <div class="comment-thread">
+            ${taskComments.length ? taskComments.map(comment => {
+              const author = memberInfo(comment.author);
+              const canDelete = comment.author === currentUser;
+              return `<article class="comment-item">
+                <div class="comment-avatar">${initials(comment.author)}</div>
+                <div class="comment-body">
+                  <div class="comment-meta">
+                    <div><strong>${escapeHTML(comment.author)}</strong>${author.position ? `<span>${escapeHTML(author.position)}</span>` : ''}</div>
+                    <time>${escapeHTML(formatCommentTime(comment.createdAt))}</time>
+                  </div>
+                  <p>${escapeHTML(comment.content).replace(/\n/g, '<br>')}</p>
+                </div>
+                ${canDelete ? `<button type="button" class="comment-delete" data-delete-comment="${escapeHTML(comment.id)}" aria-label="댓글 삭제">×</button>` : ''}
+              </article>`;
+            }).join('') : '<div class="comment-empty">첫 코멘트를 남겨보세요.</div>'}
+          </div>
+          <form class="comment-composer" data-comment-form="${escapeHTML(task.id)}">
+            <div class="comment-avatar composer-avatar">${initials(currentUser)}</div>
+            <textarea name="comment" rows="1" maxlength="1000" placeholder="진행 상황이나 확인할 내용을 남겨주세요." aria-label="코멘트 입력"></textarea>
+            <button type="submit">등록</button>
+          </form>
+        </section>`;
+
+      const detailRow = `<tr class="subtask-detail-row"><td colspan="6">
+        <div class="task-detail-panel">${checklistHtml}${commentsHtml}</div>
       </td></tr>`;
       return mainRow + detailRow;
     }).join('');
+
     els.taskListContainer.innerHTML = `<div class="table-scroll"><table class="task-table"><thead><tr>
       <th>업무</th><th>담당자</th><th>기간</th><th>상태</th><th>진행률</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -615,6 +764,7 @@
           <div class="task-card-top">${statusBadge(task)}${priorityBadge(task)}</div>
           <h3>${escapeHTML(task.title)}</h3><p>${escapeHTML(task.project)} · ${escapeHTML(task.assignee)}</p>
           ${subtaskStats(task).total ? `<div class="task-card-checklist">✓ ${subtaskStats(task).completed}/${subtaskStats(task).total} 세부 일정 완료</div>` : ''}
+          ${commentsForTask(task.id).length ? `<div class="task-card-comments">댓글 ${commentsForTask(task.id).length}</div>` : ''}
           <div class="mini-progress"><i style="width:${task.progress}%"></i></div>
           <div class="task-card-footer"><span>${formatShort(task.start)} ~ ${formatShort(task.end)}</span><strong>${task.progress}%</strong></div>
         </article>`).join('') || '<div class="empty-state">업무 없음</div>'}</section>`;
@@ -690,8 +840,9 @@
     const outOfRangeSubtask = editingSubtasks.find(item => item.dueDate < els.taskStart.value || item.dueDate > els.taskEnd.value);
     if (outOfRangeSubtask) return showToast('세부 일정 마감일은 전체 업무 기간 안으로 설정하세요.');
 
+    const isEditing = Boolean(els.taskId.value);
     const payload = {
-      id: els.taskId.value,
+      id: els.taskId.value || `T${Date.now()}${Math.random().toString(16).slice(2, 8)}`,
       title: els.taskTitle.value.trim(),
       project: els.taskProject.value.trim(),
       assignee: els.taskAssignee.value,
@@ -709,7 +860,7 @@
     els.saveTaskBtn.disabled = true;
     els.deleteTaskBtn.disabled = true;
     try {
-      await mutateAndRefresh('saveTask', payload, payload.id ? '업무를 수정했습니다.' : '새 업무를 등록했습니다.');
+      await mutateAndRefresh('saveTask', payload, isEditing ? '업무를 수정했습니다.' : '새 업무를 등록했습니다.');
       closeTaskModal();
     } catch (error) {
       console.error(error);
@@ -738,6 +889,48 @@
       if (taskIndex >= 0) tasks[taskIndex] = previous;
       renderAll();
       setConnectionState('error', '저장 확인 필요', error.message);
+      showToast(error.message);
+    }
+  }
+
+  async function addComment(taskId, content, submitButton) {
+    const trimmed = String(content || '').trim();
+    if (!currentUser) return showToast('왼쪽 아래에서 내 이름을 먼저 선택하세요.');
+    if (!trimmed) return showToast('코멘트 내용을 입력하세요.');
+    const payload = {
+      id: `C${Date.now()}${Math.random().toString(16).slice(2, 8)}`,
+      taskId,
+      author: currentUser,
+      content: trimmed,
+      createdAt: new Date().toISOString()
+    };
+    if (submitButton) submitButton.disabled = true;
+    try {
+      await mutateAndRefresh('addComment', payload, '코멘트를 등록했습니다.');
+      expandedTaskIds.add(taskId);
+      renderTaskList();
+      return true;
+    } catch (error) {
+      console.error(error);
+      setConnectionState('error', '댓글 저장 확인 필요', error.message);
+      showToast(error.message);
+      return false;
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+    }
+  }
+
+  async function deleteComment(commentId) {
+    const comment = comments.find(item => item.id === commentId);
+    if (!comment || comment.author !== currentUser) return;
+    if (!confirm('이 코멘트를 삭제할까요?')) return;
+    try {
+      await mutateAndRefresh('deleteComment', { id: comment.id, author: currentUser }, '코멘트를 삭제했습니다.');
+      expandedTaskIds.add(comment.taskId);
+      renderTaskList();
+    } catch (error) {
+      console.error(error);
+      setConnectionState('error', '댓글 삭제 확인 필요', error.message);
       showToast(error.message);
     }
   }
@@ -783,15 +976,23 @@
       const lastInput = els.subtaskEditorList.querySelector('.subtask-editor-row:last-child .subtask-title-input');
       if (lastInput) lastInput.focus();
     });
-    els.subtaskEditorList.addEventListener('input', event => {
+    const updateEditingSubtask = event => {
       const index = Number(event.target.dataset.subtaskIndex);
       const field = event.target.dataset.subtaskField;
       if (!Number.isInteger(index) || !editingSubtasks[index] || !field) return;
       editingSubtasks[index][field] = field === 'completed' ? event.target.checked : event.target.value;
       if (field === 'completed') renderSubtaskEditor();
       else syncProgressFromEditingSubtasks();
-    });
+    };
+    els.subtaskEditorList.addEventListener('input', updateEditingSubtask);
+    els.subtaskEditorList.addEventListener('change', updateEditingSubtask);
     els.subtaskEditorList.addEventListener('click', event => {
+      if (event.target.closest('[data-add-subtask-empty]')) {
+        editingSubtasks.push(newSubtask());
+        renderSubtaskEditor();
+        els.subtaskEditorList.querySelector('.subtask-title-input')?.focus();
+        return;
+      }
       const button = event.target.closest('[data-remove-subtask]');
       if (!button) return;
       editingSubtasks.splice(Number(button.dataset.removeSubtask), 1);
@@ -815,7 +1016,33 @@
       $$('.view-switcher button').forEach(item => item.classList.toggle('active', item === button));
       renderTaskList();
     }));
+    els.taskListContainer.addEventListener('submit', event => {
+      const form = event.target.closest('[data-comment-form]');
+      if (!form) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const textarea = form.querySelector('textarea[name="comment"]');
+      const button = form.querySelector('button[type="submit"]');
+      const content = textarea?.value || '';
+      if (!content.trim()) return showToast('코멘트 내용을 입력하세요.');
+      addComment(form.dataset.commentForm, content, button).then(saved => {
+        if (saved && textarea) textarea.value = '';
+      });
+    });
+    els.taskListContainer.addEventListener('keydown', event => {
+      const textarea = event.target.closest('.comment-composer textarea');
+      if (!textarea || event.key !== 'Enter' || event.shiftKey) return;
+      event.preventDefault();
+      textarea.closest('form')?.requestSubmit();
+    });
     document.addEventListener('click', event => {
+      const deleteCommentButton = event.target.closest('[data-delete-comment]');
+      if (deleteCommentButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        deleteComment(deleteCommentButton.dataset.deleteComment);
+        return;
+      }
       const toggle = event.target.closest('[data-toggle-subtasks]');
       if (toggle) {
         event.preventDefault();
