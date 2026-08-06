@@ -50,6 +50,8 @@
     progressValue: $('#progressValue'),
     taskDescription: $('#taskDescription'),
     taskLink: $('#taskLink'),
+    addSubtaskBtn: $('#addSubtaskBtn'),
+    subtaskEditorList: $('#subtaskEditorList'),
     taskModalTitle: $('#taskModalTitle'),
     deleteTaskBtn: $('#deleteTaskBtn'),
     saveTaskBtn: $('#saveTaskBtn'),
@@ -76,6 +78,8 @@
   let calendarAnchor = startOfWeek(new Date());
   let activeMineOnly = false;
   let isSyncing = false;
+  let editingSubtasks = [];
+  const expandedTaskIds = new Set();
 
   function iso(date) {
     const d = new Date(date);
@@ -131,8 +135,22 @@
     return normalizeTask({
       id: `T${Date.now()}${Math.random().toString(16).slice(2, 7)}`,
       title, project, assignee, start: iso(start), end: iso(end), status, priority, progress,
-      description, link: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+      description, link: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), subtasks: []
     });
+  }
+
+  function normalizeSubtasks(value) {
+    let source = value;
+    if (typeof source === 'string') {
+      try { source = JSON.parse(source); } catch (error) { source = []; }
+    }
+    if (!Array.isArray(source)) return [];
+    return source.slice(0, 30).map((item, index) => ({
+      id: String(item?.id || `S${Date.now()}${index}${Math.random().toString(16).slice(2, 6)}`),
+      title: String(item?.title || '').slice(0, 120),
+      dueDate: String(item?.dueDate || '').slice(0, 10),
+      completed: item?.completed === true || String(item?.completed).toLowerCase() === 'true'
+    })).filter(item => item.title || item.dueDate);
   }
 
   function normalizeTask(task = {}) {
@@ -149,7 +167,8 @@
       description: String(task.description || ''),
       link: String(task.link || ''),
       createdAt: String(task.createdAt || ''),
-      updatedAt: String(task.updatedAt || '')
+      updatedAt: String(task.updatedAt || ''),
+      subtasks: normalizeSubtasks(task.subtasks)
     };
   }
 
@@ -166,9 +185,9 @@
     }
     tasks = sampleTasks();
     teamMembers = [
-      { name: '김마케팅', team: '마케팅팀', active: true },
-      { name: '박디자인', team: '마케팅팀', active: true },
-      { name: '이콘텐츠', team: '마케팅팀', active: true }
+      { name: '김마케팅', position: '프로', team: '마케팅팀', active: true },
+      { name: '박디자인', position: '프로', team: '마케팅팀', active: true },
+      { name: '이콘텐츠', position: '프로', team: '마케팅팀', active: true }
     ];
     return false;
   }
@@ -184,6 +203,59 @@
   function formatShort(value) { const d = dateOnly(value); return `${d.getMonth() + 1}.${String(d.getDate()).padStart(2, '0')}`; }
   function statusBadge(task) { const st = actualStatus(task); return `<span class="badge ${st}">${STATUS[st].label}</span>`; }
   function priorityBadge(task) { return ['urgent', 'high'].includes(task.priority) ? `<span class="badge priority-${task.priority}">${PRIORITY[task.priority]}</span>` : ''; }
+
+  function memberInfo(name) {
+    return teamMembers.find(member => member.name === name) || {};
+  }
+
+  function subtaskStats(task) {
+    const items = normalizeSubtasks(task.subtasks);
+    const completed = items.filter(item => item.completed).length;
+    return { total: items.length, completed };
+  }
+
+  function nextSubtask(task) {
+    return normalizeSubtasks(task.subtasks)
+      .filter(item => !item.completed && item.dueDate)
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0] || null;
+  }
+
+  function checklistProgress(items) {
+    if (!items.length) return null;
+    return Math.round(items.filter(item => item.completed).length / items.length * 100);
+  }
+
+  function newSubtask() {
+    return { id: `S${Date.now()}${Math.random().toString(16).slice(2, 7)}`, title: '', dueDate: '', completed: false };
+  }
+
+  function syncProgressFromEditingSubtasks() {
+    const progress = checklistProgress(editingSubtasks);
+    if (progress === null) return;
+    els.taskProgress.value = progress;
+    els.progressValue.textContent = `${progress}% · 체크리스트 자동 계산`;
+    if (progress === 100) els.taskStatus.value = 'completed';
+    else if (els.taskStatus.value === 'completed') els.taskStatus.value = progress > 0 ? 'progress' : 'before';
+  }
+
+  function renderSubtaskEditor() {
+    if (!editingSubtasks.length) {
+      els.subtaskEditorList.innerHTML = '<div class="subtask-empty">아직 세부 일정이 없습니다. 위의 ＋ 버튼으로 추가하세요.</div>';
+      els.progressValue.textContent = `${els.taskProgress.value}%`;
+      return;
+    }
+    els.subtaskEditorList.innerHTML = editingSubtasks.map((item, index) => `
+      <div class="subtask-editor-row ${item.completed ? 'completed' : ''}">
+        <label class="subtask-check" title="완료 여부">
+          <input type="checkbox" data-subtask-field="completed" data-subtask-index="${index}" ${item.completed ? 'checked' : ''}>
+          <span></span>
+        </label>
+        <input class="subtask-title-input" data-subtask-field="title" data-subtask-index="${index}" maxlength="120" value="${escapeHTML(item.title)}" placeholder="예: 1차 스크립트 완료">
+        <input class="subtask-date-input" data-subtask-field="dueDate" data-subtask-index="${index}" type="date" value="${escapeHTML(item.dueDate)}">
+        <button type="button" class="remove-subtask-button" data-remove-subtask="${index}" aria-label="세부 일정 삭제">×</button>
+      </div>`).join('');
+    syncProgressFromEditingSubtasks();
+  }
 
   function apiConfigured() {
     return /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/.test(String(CONFIG.API_URL || '')) && !/PASTE_|YOUR_/i.test(CONFIG.API_URL);
@@ -333,7 +405,7 @@
   function updateProfile() {
     const member = teamMembers.find(item => item.name === currentUser);
     els.profileName.textContent = currentUser || '사용자 선택';
-    els.profileTeam.textContent = member?.team || '팀 공용';
+    els.profileTeam.textContent = [member?.position, member?.team].filter(Boolean).join(' · ') || '팀 공용';
     els.profileAvatar.textContent = initials(currentUser);
   }
 
@@ -352,7 +424,8 @@
       if (!ignorePeriod && period !== 'all' && !overlaps(task, start, end)) return false;
       if (assignee !== 'all' && task.assignee !== assignee) return false;
       if (status !== 'all' && actualStatus(task) !== status) return false;
-      if (query && ![task.title, task.project, task.assignee, task.description].some(value => (value || '').toLowerCase().includes(query))) return false;
+      const subtaskText = normalizeSubtasks(task.subtasks).map(item => item.title).join(' ');
+      if (query && ![task.title, task.project, task.assignee, task.description, subtaskText].some(value => (value || '').toLowerCase().includes(query))) return false;
       return true;
     });
   }
@@ -416,7 +489,7 @@
     els.focusTaskList.innerHTML = focus.length ? focus.map(task => `
       <div class="focus-item" data-open-task="${escapeHTML(task.id)}">
         <div class="focus-date"><strong>${String(dateOnly(task.end).getDate()).padStart(2, '0')}</strong><span>${dateOnly(task.end).getMonth() + 1}월</span></div>
-        <div class="focus-copy"><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} · ${task.progress}%</span></div>
+        <div class="focus-copy"><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} · ${task.progress}%</span>${nextSubtask(task) ? `<small>다음 일정 ${formatShort(nextSubtask(task).dueDate)} · ${escapeHTML(nextSubtask(task).title)}</small>` : ''}</div>
         ${statusBadge(task)}
       </div>`).join('') : '<div class="empty-state">이번 주 마감 예정인 내 업무가 없습니다.</div>';
 
@@ -466,7 +539,7 @@
       const due = mine.filter(task => actualStatus(task) !== 'completed' && between(task.end, today, weekEnd)).length;
       const delayed = mine.filter(task => actualStatus(task) === 'delayed').length;
       return `<tr>
-        <td><div class="team-person"><div class="avatar">${initials(name)}</div><strong>${escapeHTML(name)}</strong></div></td>
+        <td><div class="team-person"><div class="avatar">${initials(name)}</div><div><strong>${escapeHTML(name)}</strong><span>${escapeHTML([memberInfo(name).position, memberInfo(name).team].filter(Boolean).join(' · '))}</span></div></div></td>
         <td>${before}</td><td class="metric-primary">${progress}</td><td>${due}</td><td class="${delayed ? 'metric-danger' : ''}">${delayed}</td>
       </tr>`;
     }).join('');
@@ -495,15 +568,42 @@
       els.taskListContainer.innerHTML = '<div class="empty-state">조건에 맞는 업무가 없습니다.</div>';
       return;
     }
+    const rows = filtered.sort((a, b) => dateOnly(a.end) - dateOnly(b.end)).map(task => {
+      const stats = subtaskStats(task);
+      const expanded = expandedTaskIds.has(task.id);
+      const mainRow = `<tr class="task-main-row" data-open-task="${escapeHTML(task.id)}">
+        <td class="task-title-cell">
+          <div class="task-title-wrap">
+            ${stats.total ? `<button type="button" class="subtask-toggle ${expanded ? 'open' : ''}" data-toggle-subtasks="${escapeHTML(task.id)}" aria-expanded="${expanded}" aria-label="세부 일정 ${expanded ? '접기' : '펼치기'}">${expanded ? '−' : '+'}</button>` : '<span class="subtask-toggle-placeholder"></span>'}
+            <div><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} ${priorityBadge(task)}${stats.total ? ` · 체크리스트 ${stats.completed}/${stats.total}` : ''}</span></div>
+          </div>
+        </td>
+        <td><div class="assignee-chip"><div class="avatar">${initials(task.assignee)}</div><div>${escapeHTML(task.assignee)}${memberInfo(task.assignee).position ? `<small>${escapeHTML(memberInfo(task.assignee).position)}</small>` : ''}</div></div></td>
+        <td>${formatShort(task.start)} ~ ${formatShort(task.end)}</td>
+        <td>${statusBadge(task)}</td><td><strong>${task.progress}%</strong></td>
+        <td class="row-actions"><button class="row-action" data-open-task="${escapeHTML(task.id)}">수정</button></td>
+      </tr>`;
+      if (!stats.total || !expanded) return mainRow;
+      const detailRow = `<tr class="subtask-detail-row"><td colspan="6">
+        <div class="subtask-checklist-view">
+          <div class="subtask-checklist-head"><strong>세부 일정</strong><span>${stats.completed}/${stats.total} 완료</span></div>
+          ${normalizeSubtasks(task.subtasks).map((item, index) => {
+            const overdue = !item.completed && item.dueDate && dateOnly(item.dueDate) < dateOnly(iso(new Date()));
+            return `<label class="subtask-view-item ${item.completed ? 'completed' : ''} ${overdue ? 'overdue' : ''}">
+              <input type="checkbox" data-subtask-check="${escapeHTML(task.id)}" data-subtask-index="${index}" ${item.completed ? 'checked' : ''}>
+              <span class="subtask-view-check"></span>
+              <span class="subtask-view-title">${escapeHTML(item.title)}</span>
+              <time>${item.dueDate ? formatShort(item.dueDate) : '날짜 미정'}</time>
+              ${overdue ? '<b>지연</b>' : ''}
+            </label>`;
+          }).join('')}
+        </div>
+      </td></tr>`;
+      return mainRow + detailRow;
+    }).join('');
     els.taskListContainer.innerHTML = `<div class="table-scroll"><table class="task-table"><thead><tr>
       <th>업무</th><th>담당자</th><th>기간</th><th>상태</th><th>진행률</th><th></th>
-    </tr></thead><tbody>${filtered.sort((a, b) => dateOnly(a.end) - dateOnly(b.end)).map(task => `<tr data-open-task="${escapeHTML(task.id)}">
-      <td class="task-title-cell"><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} ${priorityBadge(task)}</span></td>
-      <td><div class="assignee-chip"><div class="avatar">${initials(task.assignee)}</div>${escapeHTML(task.assignee)}</div></td>
-      <td>${formatShort(task.start)} ~ ${formatShort(task.end)}</td>
-      <td>${statusBadge(task)}</td><td><strong>${task.progress}%</strong></td>
-      <td class="row-actions"><button class="row-action" data-open-task="${escapeHTML(task.id)}">수정</button></td>
-    </tr>`).join('')}</tbody></table></div>`;
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
   }
 
   function renderBoard(filtered) {
@@ -514,6 +614,7 @@
         <article class="task-card" data-open-task="${escapeHTML(task.id)}">
           <div class="task-card-top">${statusBadge(task)}${priorityBadge(task)}</div>
           <h3>${escapeHTML(task.title)}</h3><p>${escapeHTML(task.project)} · ${escapeHTML(task.assignee)}</p>
+          ${subtaskStats(task).total ? `<div class="task-card-checklist">✓ ${subtaskStats(task).completed}/${subtaskStats(task).total} 세부 일정 완료</div>` : ''}
           <div class="mini-progress"><i style="width:${task.progress}%"></i></div>
           <div class="task-card-footer"><span>${formatShort(task.start)} ~ ${formatShort(task.end)}</span><strong>${task.progress}%</strong></div>
         </article>`).join('') || '<div class="empty-state">업무 없음</div>'}</section>`;
@@ -565,6 +666,8 @@
     els.progressValue.textContent = `${els.taskProgress.value}%`;
     els.taskDescription.value = task?.description || '';
     els.taskLink.value = task?.link || '';
+    editingSubtasks = normalizeSubtasks(task?.subtasks || []).map(item => ({ ...item }));
+    renderSubtaskEditor();
     els.taskModalTitle.textContent = task ? '업무 수정' : '새 업무 등록';
     els.deleteTaskBtn.classList.toggle('hidden', !task);
     els.taskModal.classList.add('open');
@@ -582,6 +685,11 @@
     if (!apiConfigured()) return showToast('먼저 config.js에 Apps Script 웹 앱 URL을 입력하세요.');
     if (dateOnly(els.taskStart.value) > dateOnly(els.taskEnd.value)) return showToast('종료일은 시작일보다 빠를 수 없습니다.');
 
+    const invalidSubtask = editingSubtasks.find(item => !item.title.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(item.dueDate));
+    if (invalidSubtask) return showToast('세부 일정의 이름과 마감일을 모두 입력하세요.');
+    const outOfRangeSubtask = editingSubtasks.find(item => item.dueDate < els.taskStart.value || item.dueDate > els.taskEnd.value);
+    if (outOfRangeSubtask) return showToast('세부 일정 마감일은 전체 업무 기간 안으로 설정하세요.');
+
     const payload = {
       id: els.taskId.value,
       title: els.taskTitle.value.trim(),
@@ -593,7 +701,8 @@
       priority: els.taskPriority.value,
       progress: Number(els.taskProgress.value),
       description: els.taskDescription.value.trim(),
-      link: els.taskLink.value.trim()
+      link: els.taskLink.value.trim(),
+      subtasks: editingSubtasks.map(item => ({ ...item, title: item.title.trim() }))
     };
     if (payload.status === 'completed') payload.progress = 100;
 
@@ -609,6 +718,27 @@
     } finally {
       els.saveTaskBtn.disabled = false;
       els.deleteTaskBtn.disabled = false;
+    }
+  }
+
+  async function toggleSubtaskCompletion(taskId, index, completed) {
+    const task = tasks.find(item => item.id === taskId);
+    if (!task || !task.subtasks[index]) return;
+    const previous = normalizeTask(task);
+    task.subtasks[index].completed = completed;
+    const progress = checklistProgress(task.subtasks);
+    if (progress !== null) task.progress = progress;
+    if (progress === 100) task.status = 'completed';
+    else if (task.status === 'completed') task.status = progress > 0 ? 'progress' : 'before';
+    renderAll();
+    try {
+      await mutateAndRefresh('saveTask', task, '세부 일정을 업데이트했습니다.');
+    } catch (error) {
+      const taskIndex = tasks.findIndex(item => item.id === taskId);
+      if (taskIndex >= 0) tasks[taskIndex] = previous;
+      renderAll();
+      setConnectionState('error', '저장 확인 필요', error.message);
+      showToast(error.message);
     }
   }
 
@@ -647,6 +777,26 @@
     els.taskForm.addEventListener('submit', submitTask);
     els.deleteTaskBtn.addEventListener('click', deleteTask);
     els.taskProgress.addEventListener('input', () => { els.progressValue.textContent = `${els.taskProgress.value}%`; });
+    els.addSubtaskBtn.addEventListener('click', () => {
+      editingSubtasks.push(newSubtask());
+      renderSubtaskEditor();
+      const lastInput = els.subtaskEditorList.querySelector('.subtask-editor-row:last-child .subtask-title-input');
+      if (lastInput) lastInput.focus();
+    });
+    els.subtaskEditorList.addEventListener('input', event => {
+      const index = Number(event.target.dataset.subtaskIndex);
+      const field = event.target.dataset.subtaskField;
+      if (!Number.isInteger(index) || !editingSubtasks[index] || !field) return;
+      editingSubtasks[index][field] = field === 'completed' ? event.target.checked : event.target.value;
+      if (field === 'completed') renderSubtaskEditor();
+      else syncProgressFromEditingSubtasks();
+    });
+    els.subtaskEditorList.addEventListener('click', event => {
+      const button = event.target.closest('[data-remove-subtask]');
+      if (!button) return;
+      editingSubtasks.splice(Number(button.dataset.removeSubtask), 1);
+      renderSubtaskEditor();
+    });
     els.taskStatus.addEventListener('change', () => {
       if (els.taskStatus.value === 'completed') {
         els.taskProgress.value = 100;
@@ -666,6 +816,21 @@
       renderTaskList();
     }));
     document.addEventListener('click', event => {
+      const toggle = event.target.closest('[data-toggle-subtasks]');
+      if (toggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        const id = toggle.dataset.toggleSubtasks;
+        if (expandedTaskIds.has(id)) expandedTaskIds.delete(id); else expandedTaskIds.add(id);
+        renderTaskList();
+        return;
+      }
+      const checklist = event.target.closest('[data-subtask-check]');
+      if (checklist) {
+        event.stopPropagation();
+        toggleSubtaskCompletion(checklist.dataset.subtaskCheck, Number(checklist.dataset.subtaskIndex), checklist.checked);
+        return;
+      }
       const taskTarget = event.target.closest('[data-open-task]');
       if (taskTarget) {
         const task = tasks.find(item => item.id === taskTarget.dataset.openTask);

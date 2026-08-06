@@ -268,6 +268,16 @@
             <span>진행률 <b id="progressValue">0%</b></span>
             <input id="taskProgress" type="range" min="0" max="100" step="5" value="0" />
           </label>
+          <section class="subtask-section full-field" aria-labelledby="subtaskSectionTitle">
+            <div class="subtask-section-head">
+              <div>
+                <span class="subtask-label" id="subtaskSectionTitle">세부 일정 체크리스트</span>
+                <p>큰 업무 안에 단계별 마감일을 추가하세요.</p>
+              </div>
+              <button type="button" class="add-subtask-button" id="addSubtaskBtn">＋ 세부 일정 추가</button>
+            </div>
+            <div class="subtask-editor-list" id="subtaskEditorList"></div>
+          </section>
           <label class="full-field">
             <span>업무 내용</span>
             <textarea id="taskDescription" rows="4" maxlength="500" placeholder="업무 범위, 전달 사항, 확인할 내용 등을 입력하세요."></textarea>
