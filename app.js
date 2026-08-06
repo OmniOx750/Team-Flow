@@ -13,7 +13,7 @@
     delayed: { label: '지연', color: '#e14a55' }
   };
   const PRIORITY = { low: '낮음', normal: '보통', high: '높음', urgent: '긴급' };
-  const REQUIRED_API_VERSION = '1.3.0';
+  const REQUIRED_API_VERSION = '1.4.1';
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -289,15 +289,14 @@
 
     els.subtaskEditorList.innerHTML = editingSubtasks.map((item, index) => `
       <div class="subtask-editor-row ${item.completed ? 'completed' : ''}">
-        <label class="subtask-check" title="완료 여부">
-          <input type="checkbox" data-subtask-field="completed" data-subtask-index="${index}" ${item.completed ? 'checked' : ''}>
-          <span></span>
-        </label>
+        <button type="button" class="subtask-check-button ${item.completed ? 'checked' : ''}" data-subtask-toggle="${index}" aria-pressed="${item.completed}" aria-label="${item.completed ? '세부 일정 미완료로 변경' : '세부 일정 완료로 변경'}" title="완료 여부">
+          <span aria-hidden="true"></span>
+        </button>
         <input class="subtask-title-input" data-subtask-field="title" data-subtask-index="${index}" maxlength="120" value="${escapeHTML(item.title)}" placeholder="세부 일정 입력">
-        <label class="subtask-date-wrap">
+        <div class="subtask-date-wrap">
           <span>마감</span>
           <input class="subtask-date-input" data-subtask-field="dueDate" data-subtask-index="${index}" type="date" value="${escapeHTML(item.dueDate)}" aria-label="세부 일정 마감일">
-        </label>
+        </div>
         <button type="button" class="remove-subtask-button" data-remove-subtask="${index}" aria-label="세부 일정 삭제">×</button>
       </div>`).join('');
     syncProgressFromEditingSubtasks();
@@ -488,7 +487,7 @@
       }
     }
 
-    throw lastError || new Error('저장 내용을 확인하지 못했습니다. Apps Script 새 버전 배포 여부를 확인하세요.');
+    throw lastError || new Error('저장 내용을 확인하지 못했습니다. Apps Script를 새 버전으로 배포했는지 확인하세요.');
   }
 
   function memberNames() {
@@ -704,13 +703,12 @@
           <div class="subtask-checklist-head"><strong>세부 일정</strong><span>${stats.completed}/${stats.total} 완료</span></div>
           ${normalizeSubtasks(task.subtasks).map((item, index) => {
             const overdue = !item.completed && item.dueDate && dateOnly(item.dueDate) < dateOnly(iso(new Date()));
-            return `<label class="subtask-view-item ${item.completed ? 'completed' : ''} ${overdue ? 'overdue' : ''}">
-              <input type="checkbox" data-subtask-check="${escapeHTML(task.id)}" data-subtask-index="${index}" ${item.completed ? 'checked' : ''}>
-              <span class="subtask-view-check"></span>
+            return `<div class="subtask-view-item ${item.completed ? 'completed' : ''} ${overdue ? 'overdue' : ''}">
+              <button type="button" class="subtask-view-check ${item.completed ? 'checked' : ''}" data-subtask-check="${escapeHTML(task.id)}" data-subtask-index="${index}" data-subtask-completed="${item.completed}" aria-pressed="${item.completed}" aria-label="${item.completed ? '세부 일정 미완료로 변경' : '세부 일정 완료로 변경'}"><span aria-hidden="true"></span></button>
               <span class="subtask-view-title">${escapeHTML(item.title)}</span>
               <time>${item.dueDate ? formatShort(item.dueDate) : '날짜 미정'}</time>
               ${overdue ? '<b>지연</b>' : ''}
-            </label>`;
+            </div>`;
           }).join('')}
         </section>` : '';
 
@@ -980,13 +978,23 @@
       const index = Number(event.target.dataset.subtaskIndex);
       const field = event.target.dataset.subtaskField;
       if (!Number.isInteger(index) || !editingSubtasks[index] || !field) return;
-      editingSubtasks[index][field] = field === 'completed' ? event.target.checked : event.target.value;
-      if (field === 'completed') renderSubtaskEditor();
-      else syncProgressFromEditingSubtasks();
+      editingSubtasks[index][field] = event.target.value;
+      syncProgressFromEditingSubtasks();
     };
     els.subtaskEditorList.addEventListener('input', updateEditingSubtask);
     els.subtaskEditorList.addEventListener('change', updateEditingSubtask);
     els.subtaskEditorList.addEventListener('click', event => {
+      const toggleButton = event.target.closest('[data-subtask-toggle]');
+      if (toggleButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        const index = Number(toggleButton.dataset.subtaskToggle);
+        if (Number.isInteger(index) && editingSubtasks[index]) {
+          editingSubtasks[index].completed = !editingSubtasks[index].completed;
+          renderSubtaskEditor();
+        }
+        return;
+      }
       if (event.target.closest('[data-add-subtask-empty]')) {
         editingSubtasks.push(newSubtask());
         renderSubtaskEditor();
@@ -1054,8 +1062,10 @@
       }
       const checklist = event.target.closest('[data-subtask-check]');
       if (checklist) {
+        event.preventDefault();
         event.stopPropagation();
-        toggleSubtaskCompletion(checklist.dataset.subtaskCheck, Number(checklist.dataset.subtaskIndex), checklist.checked);
+        const completed = checklist.dataset.subtaskCompleted === 'true';
+        toggleSubtaskCompletion(checklist.dataset.subtaskCheck, Number(checklist.dataset.subtaskIndex), !completed);
         return;
       }
       const taskTarget = event.target.closest('[data-open-task]');
