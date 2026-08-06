@@ -1,0 +1,720 @@
+(() => {
+  'use strict';
+
+  const CONFIG = window.TEAM_FLOW_CONFIG || {};
+  const CACHE_KEY = 'teamFlowRemoteCacheV2';
+  const USER_KEY = 'teamFlowCurrentUserV2';
+  const TOKEN_KEY = 'teamFlowAccessTokenV2';
+  const STATUS = {
+    before: { label: '진행 전', color: '#89909d' },
+    progress: { label: '진행 중', color: '#2f6bff' },
+    completed: { label: '완료', color: '#23a36d' },
+    hold: { label: '보류', color: '#e58a18' },
+    delayed: { label: '지연', color: '#e14a55' }
+  };
+  const PRIORITY = { low: '낮음', normal: '보통', high: '높음', urgent: '긴급' };
+
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+
+  const els = {
+    sidebar: $('#sidebar'),
+    pageTitle: $('#pageTitle'),
+    todayLabel: $('#todayLabel'),
+    summaryCards: $('#summaryCards'),
+    focusTaskList: $('#focusTaskList'),
+    projectProgressList: $('#projectProgressList'),
+    weeklyTimeline: $('#weeklyTimeline'),
+    teamStatusBody: $('#teamStatusBody'),
+    statusDonut: $('#statusDonut'),
+    donutTotal: $('#donutTotal'),
+    statusLegend: $('#statusLegend'),
+    taskListContainer: $('#taskListContainer'),
+    taskListTitle: $('#taskListTitle'),
+    calendarGrid: $('#calendarGrid'),
+    weekRangeLabel: $('#weekRangeLabel'),
+    assigneeFilter: $('#assigneeFilter'),
+    statusFilter: $('#statusFilter'),
+    globalSearch: $('#globalSearch'),
+    taskModal: $('#taskModal'),
+    taskForm: $('#taskForm'),
+    taskId: $('#taskId'),
+    taskTitle: $('#taskTitle'),
+    taskProject: $('#taskProject'),
+    taskAssignee: $('#taskAssignee'),
+    taskStart: $('#taskStart'),
+    taskEnd: $('#taskEnd'),
+    taskStatus: $('#taskStatus'),
+    taskPriority: $('#taskPriority'),
+    taskProgress: $('#taskProgress'),
+    progressValue: $('#progressValue'),
+    taskDescription: $('#taskDescription'),
+    taskLink: $('#taskLink'),
+    taskModalTitle: $('#taskModalTitle'),
+    deleteTaskBtn: $('#deleteTaskBtn'),
+    saveTaskBtn: $('#saveTaskBtn'),
+    toast: $('#toast'),
+    projectOptions: $('#projectOptions'),
+    currentUserSelect: $('#currentUserSelect'),
+    profileName: $('#profileName'),
+    profileTeam: $('#profileTeam'),
+    profileAvatar: $('#profileAvatar'),
+    connectionBanner: $('#connectionBanner'),
+    connectionLabel: $('#connectionLabel'),
+    connectionDot: $('#connectionDot'),
+    lastSyncLabel: $('#lastSyncLabel'),
+    refreshDataBtn: $('#refreshDataBtn'),
+    changeAccessKeyBtn: $('#changeAccessKeyBtn')
+  };
+
+  let tasks = [];
+  let teamMembers = [];
+  let currentUser = localStorage.getItem(USER_KEY) || '';
+  let activeView = 'dashboard';
+  let taskLayout = 'list';
+  let period = 'week';
+  let calendarAnchor = startOfWeek(new Date());
+  let activeMineOnly = false;
+  let isSyncing = false;
+
+  function iso(date) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function addDays(date, amount) {
+    const d = new Date(date);
+    d.setDate(d.getDate() + amount);
+    return d;
+  }
+
+  function startOfWeek(date) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    const day = d.getDay();
+    d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day));
+    return d;
+  }
+
+  function endOfWeek(date) { return addDays(startOfWeek(date), 6); }
+  function dateOnly(value) {
+    const safe = /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? `${value}T00:00:00` : value;
+    const d = new Date(safe);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+  function isSameDay(a, b) { return iso(a) === iso(b); }
+  function between(value, start, end) { const d = dateOnly(value); return d >= start && d <= end; }
+  function overlaps(task, start, end) { return dateOnly(task.start) <= end && dateOnly(task.end) >= start; }
+  function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+  function actualStatus(task) {
+    const today = dateOnly(iso(new Date()));
+    return task.status !== 'completed' && dateOnly(task.end) < today ? 'delayed' : task.status;
+  }
+
+  function sampleTasks() {
+    const monday = startOfWeek(new Date());
+    return [
+      makeTask('ERS 부스 그래픽 최종 전달', 'ERS 2026', '김마케팅', addDays(monday, -1), addDays(monday, 1), 'progress', 'urgent', 70, 'Google Sheets 연결 전 화면 확인용 샘플 업무입니다.'),
+      makeTask('OmniOx750U 영상 스토리보드 검토', 'OmniOx750U 영상', '이콘텐츠', monday, addDays(monday, 3), 'progress', 'high', 45, ''),
+      makeTask('MV50 카탈로그 사양표 업데이트', 'MV50 카탈로그', '김마케팅', addDays(monday, 2), addDays(monday, 4), 'before', 'high', 15, ''),
+      makeTask('웹사이트 Bi-Flow 페이지 수정', '웹사이트 개편', '박디자인', addDays(monday, 1), addDays(monday, 5), 'before', 'normal', 10, '')
+    ];
+  }
+
+  function makeTask(title, project, assignee, start, end, status, priority, progress, description) {
+    return normalizeTask({
+      id: `T${Date.now()}${Math.random().toString(16).slice(2, 7)}`,
+      title, project, assignee, start: iso(start), end: iso(end), status, priority, progress,
+      description, link: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    });
+  }
+
+  function normalizeTask(task = {}) {
+    return {
+      id: String(task.id || ''),
+      title: String(task.title || ''),
+      project: String(task.project || '기타'),
+      assignee: String(task.assignee || ''),
+      start: String(task.start || iso(new Date())).slice(0, 10),
+      end: String(task.end || iso(new Date())).slice(0, 10),
+      status: ['before', 'progress', 'completed', 'hold'].includes(task.status) ? task.status : 'before',
+      priority: ['low', 'normal', 'high', 'urgent'].includes(task.priority) ? task.priority : 'normal',
+      progress: Math.max(0, Math.min(100, Number(task.progress) || 0)),
+      description: String(task.description || ''),
+      link: String(task.link || ''),
+      createdAt: String(task.createdAt || ''),
+      updatedAt: String(task.updatedAt || '')
+    };
+  }
+
+  function readCache() {
+    try {
+      const cached = JSON.parse(localStorage.getItem(CACHE_KEY));
+      if (cached && Array.isArray(cached.tasks)) {
+        tasks = cached.tasks.map(normalizeTask);
+        teamMembers = Array.isArray(cached.members) ? cached.members : [];
+        return true;
+      }
+    } catch (error) {
+      console.warn('캐시를 읽지 못했습니다.', error);
+    }
+    tasks = sampleTasks();
+    teamMembers = [
+      { name: '김마케팅', team: '마케팅팀', active: true },
+      { name: '박디자인', team: '마케팅팀', active: true },
+      { name: '이콘텐츠', team: '마케팅팀', active: true }
+    ];
+    return false;
+  }
+
+  function writeCache() {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ tasks, members: teamMembers, savedAt: new Date().toISOString() }));
+  }
+
+  function escapeHTML(value = '') {
+    return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+  }
+  function initials(name) { return String(name || '나').slice(0, 2); }
+  function formatShort(value) { const d = dateOnly(value); return `${d.getMonth() + 1}.${String(d.getDate()).padStart(2, '0')}`; }
+  function statusBadge(task) { const st = actualStatus(task); return `<span class="badge ${st}">${STATUS[st].label}</span>`; }
+  function priorityBadge(task) { return ['urgent', 'high'].includes(task.priority) ? `<span class="badge priority-${task.priority}">${PRIORITY[task.priority]}</span>` : ''; }
+
+  function apiConfigured() {
+    return /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/.test(String(CONFIG.API_URL || '')) && !/PASTE_|YOUR_/i.test(CONFIG.API_URL);
+  }
+
+  function getAccessToken({ ask = false } = {}) {
+    let token = localStorage.getItem(TOKEN_KEY) || '';
+    if (!token && ask) {
+      token = window.prompt('TEAM FLOW 팀 접속키를 입력하세요.\n관리자가 Apps Script에서 확인한 접속키입니다.') || '';
+      token = token.trim();
+      if (token) localStorage.setItem(TOKEN_KEY, token);
+    }
+    return token;
+  }
+
+  function setConnectionState(state, label, detail) {
+    els.connectionBanner.classList.remove('loading', 'connected', 'offline', 'error');
+    els.connectionBanner.classList.add(state);
+    els.connectionLabel.textContent = label;
+    els.lastSyncLabel.textContent = detail;
+  }
+
+  function jsonpRequest(action) {
+    return new Promise((resolve, reject) => {
+      if (!apiConfigured()) return reject(new Error('config.js에 Apps Script 웹 앱 URL을 입력하세요.'));
+      const token = getAccessToken({ ask: true });
+      if (!token) return reject(new Error('팀 접속키가 필요합니다.'));
+
+      const callbackName = `__teamFlowCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const script = document.createElement('script');
+      const timeoutMs = Number(CONFIG.REQUEST_TIMEOUT_MS) || 20000;
+      const timer = setTimeout(() => cleanup(new Error('Google Sheets 응답 시간이 초과되었습니다.')), timeoutMs);
+
+      function cleanup(error, data) {
+        clearTimeout(timer);
+        delete window[callbackName];
+        script.remove();
+        if (error) reject(error); else resolve(data);
+      }
+
+      window[callbackName] = data => {
+        if (!data || data.ok !== true) return cleanup(new Error(data?.error || 'Google Sheets 요청에 실패했습니다.'));
+        cleanup(null, data);
+      };
+      script.onerror = () => cleanup(new Error('Apps Script에 연결하지 못했습니다. 배포 권한과 URL을 확인하세요.'));
+
+      const url = new URL(CONFIG.API_URL);
+      url.searchParams.set('action', action);
+      url.searchParams.set('callback', callbackName);
+      url.searchParams.set('token', token);
+      url.searchParams.set('_', Date.now().toString());
+      script.src = url.toString();
+      script.async = true;
+      document.head.appendChild(script);
+    });
+  }
+
+  async function postMutation(action, payload) {
+    if (!apiConfigured()) throw new Error('config.js에 Apps Script 웹 앱 URL을 입력하세요.');
+    const token = getAccessToken({ ask: true });
+    if (!token) throw new Error('팀 접속키가 필요합니다.');
+
+    await fetch(CONFIG.API_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      credentials: 'include',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ action, token, payload })
+    });
+  }
+
+  async function loadRemoteData({ silent = false } = {}) {
+    if (isSyncing) return;
+    if (!apiConfigured()) {
+      setConnectionState('offline', 'Google Sheets 설정 필요', 'config.js에 Apps Script 웹 앱 URL을 붙여넣으세요. 현재는 샘플 화면입니다.');
+      renderAll();
+      return;
+    }
+
+    isSyncing = true;
+    els.refreshDataBtn.disabled = true;
+    if (!silent) setConnectionState('loading', 'Google Sheets 동기화 중', '팀 공용 업무를 불러오고 있습니다.');
+    try {
+      const response = await jsonpRequest('getData');
+      tasks = Array.isArray(response.tasks) ? response.tasks.map(normalizeTask) : [];
+      teamMembers = Array.isArray(response.members) ? response.members.filter(member => member.active !== false) : [];
+      ensureCurrentUser();
+      writeCache();
+      renderAll();
+      const syncedAt = new Date();
+      setConnectionState('connected', 'Google Sheets 연결됨', `마지막 동기화 ${syncedAt.getHours()}:${String(syncedAt.getMinutes()).padStart(2, '0')}`);
+    } catch (error) {
+      console.error(error);
+      setConnectionState('error', 'Google Sheets 연결 실패', error.message);
+      renderAll();
+      if (!silent) showToast(error.message);
+    } finally {
+      isSyncing = false;
+      els.refreshDataBtn.disabled = false;
+    }
+  }
+
+  async function mutateAndRefresh(action, payload, successMessage) {
+    setConnectionState('loading', 'Google Sheets 저장 중', '변경 사항을 팀 공용 시트에 반영하고 있습니다.');
+    await postMutation(action, payload);
+
+    const attempts = Number(CONFIG.SYNC_POLL_ATTEMPTS) || 7;
+    const interval = Number(CONFIG.SYNC_POLL_INTERVAL_MS) || 700;
+    let lastError = null;
+    for (let i = 0; i < attempts; i += 1) {
+      await sleep(interval);
+      try {
+        const response = await jsonpRequest('getData');
+        tasks = Array.isArray(response.tasks) ? response.tasks.map(normalizeTask) : [];
+        teamMembers = Array.isArray(response.members) ? response.members.filter(member => member.active !== false) : [];
+        ensureCurrentUser();
+        writeCache();
+        renderAll();
+        setConnectionState('connected', 'Google Sheets 연결됨', '방금 변경 사항을 동기화했습니다.');
+        showToast(successMessage);
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('저장 후 동기화하지 못했습니다. 새로고침으로 확인하세요.');
+  }
+
+  function memberNames() {
+    const names = teamMembers.map(member => String(member.name || '').trim()).filter(Boolean);
+    const taskNames = tasks.map(task => task.assignee).filter(Boolean);
+    return [...new Set([...names, ...taskNames])];
+  }
+
+  function ensureCurrentUser() {
+    const names = memberNames();
+    if (!names.length) {
+      currentUser = '';
+      return;
+    }
+    if (!names.includes(currentUser)) currentUser = names[0];
+    localStorage.setItem(USER_KEY, currentUser);
+  }
+
+  function updateProfile() {
+    const member = teamMembers.find(item => item.name === currentUser);
+    els.profileName.textContent = currentUser || '사용자 선택';
+    els.profileTeam.textContent = member?.team || '팀 공용';
+    els.profileAvatar.textContent = initials(currentUser);
+  }
+
+  function getFilteredTasks({ ignorePeriod = false } = {}) {
+    const query = els.globalSearch.value.trim().toLowerCase();
+    const assignee = els.assigneeFilter.value;
+    const status = els.statusFilter.value;
+    const today = dateOnly(iso(new Date()));
+    let start;
+    let end;
+    if (period === 'week') { start = startOfWeek(today); end = endOfWeek(today); }
+    if (period === 'month') { start = new Date(today.getFullYear(), today.getMonth(), 1); end = new Date(today.getFullYear(), today.getMonth() + 1, 0); }
+
+    return tasks.filter(task => {
+      if (activeMineOnly && task.assignee !== currentUser) return false;
+      if (!ignorePeriod && period !== 'all' && !overlaps(task, start, end)) return false;
+      if (assignee !== 'all' && task.assignee !== assignee) return false;
+      if (status !== 'all' && actualStatus(task) !== status) return false;
+      if (query && ![task.title, task.project, task.assignee, task.description].some(value => (value || '').toLowerCase().includes(query))) return false;
+      return true;
+    });
+  }
+
+  function renderAll() {
+    populateFilters();
+    renderDashboard();
+    renderTaskList();
+    renderCalendar();
+    updateProfile();
+  }
+
+  function populateFilters() {
+    const names = memberNames();
+    const selectedAssignee = els.assigneeFilter.value || 'all';
+    const selectedTaskAssignee = els.taskAssignee.value || currentUser;
+    const selectedCurrentUser = els.currentUserSelect.value || currentUser;
+    const options = names.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
+
+    els.assigneeFilter.innerHTML = '<option value="all">담당자 전체</option>' + options;
+    els.assigneeFilter.value = names.includes(selectedAssignee) ? selectedAssignee : 'all';
+    els.taskAssignee.innerHTML = options || '<option value="">팀원을 먼저 등록하세요</option>';
+    els.taskAssignee.value = names.includes(selectedTaskAssignee) ? selectedTaskAssignee : (currentUser || names[0] || '');
+    els.currentUserSelect.innerHTML = options || '<option value="">등록된 팀원 없음</option>';
+    els.currentUserSelect.value = names.includes(selectedCurrentUser) ? selectedCurrentUser : (currentUser || names[0] || '');
+
+    const projects = [...new Set(tasks.map(task => task.project).filter(Boolean))].sort();
+    els.projectOptions.innerHTML = projects.map(project => `<option value="${escapeHTML(project)}"></option>`).join('');
+  }
+
+  function renderDashboard() {
+    const filtered = getFilteredTasks();
+    const today = dateOnly(iso(new Date()));
+    const weekEnd = endOfWeek(today);
+    const counts = {
+      total: filtered.length,
+      progress: filtered.filter(task => actualStatus(task) === 'progress').length,
+      due: filtered.filter(task => actualStatus(task) !== 'completed' && between(task.end, today, weekEnd)).length,
+      delayed: filtered.filter(task => actualStatus(task) === 'delayed').length,
+      completed: filtered.filter(task => actualStatus(task) === 'completed').length
+    };
+    const summary = [
+      ['total', '전체 업무', counts.total, '현재 조회 범위', '☷'],
+      ['progress', '진행 중', counts.progress, '실행 중인 업무', '↻'],
+      ['due', '이번 주 마감', counts.due, '확인이 필요한 일정', '◷'],
+      ['delayed', '지연', counts.delayed, '종료일이 지난 업무', '!'],
+      ['completed', '완료', counts.completed, '완료 처리된 업무', '✓']
+    ];
+    els.summaryCards.innerHTML = summary.map(([key, label, value, note, icon]) => `
+      <article class="summary-card ${key}"><button data-summary-filter="${key}">
+        <div class="summary-label"><span>${label}</span><span class="summary-icon">${icon}</span></div>
+        <div class="summary-value">${value}</div><div class="summary-note">${note}</div>
+      </button></article>`).join('');
+
+    const focus = tasks.filter(task => task.assignee === currentUser && actualStatus(task) !== 'completed')
+      .filter(task => dateOnly(task.end) <= weekEnd)
+      .sort((a, b) => {
+        const delayedDiff = (actualStatus(a) === 'delayed' ? 0 : 1) - (actualStatus(b) === 'delayed' ? 0 : 1);
+        return delayedDiff || dateOnly(a.end) - dateOnly(b.end) || (b.priority === 'urgent') - (a.priority === 'urgent');
+      }).slice(0, 6);
+    els.focusTaskList.innerHTML = focus.length ? focus.map(task => `
+      <div class="focus-item" data-open-task="${escapeHTML(task.id)}">
+        <div class="focus-date"><strong>${String(dateOnly(task.end).getDate()).padStart(2, '0')}</strong><span>${dateOnly(task.end).getMonth() + 1}월</span></div>
+        <div class="focus-copy"><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} · ${task.progress}%</span></div>
+        ${statusBadge(task)}
+      </div>`).join('') : '<div class="empty-state">이번 주 마감 예정인 내 업무가 없습니다.</div>';
+
+    const grouped = Object.values(tasks.reduce((acc, task) => {
+      acc[task.project] ||= { name: task.project, tasks: [], total: 0 };
+      acc[task.project].tasks.push(task);
+      acc[task.project].total += Number(task.progress || 0);
+      return acc;
+    }, {})).map(group => ({ ...group, avg: Math.round(group.total / group.tasks.length) })).sort((a, b) => b.tasks.length - a.tasks.length).slice(0, 5);
+    els.projectProgressList.innerHTML = grouped.length ? grouped.map(project => `
+      <div class="project-row">
+        <div class="project-head"><strong>${escapeHTML(project.name)}</strong><span>${project.avg}%</span></div>
+        <div class="progress-track"><div class="progress-bar" style="width:${project.avg}%"></div></div>
+        <div class="project-meta">세부 업무 ${project.tasks.length}개 · 완료 ${project.tasks.filter(task => actualStatus(task) === 'completed').length}개</div>
+      </div>`).join('') : '<div class="empty-state">등록된 프로젝트가 없습니다.</div>';
+
+    renderTimeline();
+    renderTeamStatus();
+    renderStatusChart(filtered);
+  }
+
+  function renderTimeline() {
+    const weekStart = startOfWeek(new Date());
+    const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+    const visible = tasks.filter(task => overlaps(task, weekStart, addDays(weekStart, 6))).sort((a, b) => dateOnly(a.start) - dateOnly(b.start)).slice(0, 9);
+    let html = '<div class="timeline"><div class="timeline-head">업무 / 담당자</div>';
+    html += days.map(day => `<div class="timeline-head ${isSameDay(day, new Date()) ? 'today' : ''}">${['월', '화', '수', '목', '금', '토', '일'][(day.getDay() + 6) % 7]} ${day.getMonth() + 1}/${day.getDate()}</div>`).join('');
+    visible.forEach(task => {
+      html += `<div class="timeline-label" data-open-task="${escapeHTML(task.id)}"><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.assignee)}</span></div>`;
+      days.forEach(day => {
+        const inside = day >= dateOnly(task.start) && day <= dateOnly(task.end);
+        html += `<div class="timeline-day">${inside ? `<div class="timeline-bar ${actualStatus(task)}" data-open-task="${escapeHTML(task.id)}">${task.progress}%</div>` : ''}</div>`;
+      });
+    });
+    html += '</div>';
+    els.weeklyTimeline.innerHTML = visible.length ? html : '<div class="empty-state">이번 주에 등록된 업무가 없습니다.</div>';
+  }
+
+  function renderTeamStatus() {
+    const today = dateOnly(iso(new Date()));
+    const weekEnd = endOfWeek(today);
+    const names = memberNames();
+    els.teamStatusBody.innerHTML = names.map(name => {
+      const mine = tasks.filter(task => task.assignee === name);
+      const before = mine.filter(task => actualStatus(task) === 'before').length;
+      const progress = mine.filter(task => actualStatus(task) === 'progress').length;
+      const due = mine.filter(task => actualStatus(task) !== 'completed' && between(task.end, today, weekEnd)).length;
+      const delayed = mine.filter(task => actualStatus(task) === 'delayed').length;
+      return `<tr>
+        <td><div class="team-person"><div class="avatar">${initials(name)}</div><strong>${escapeHTML(name)}</strong></div></td>
+        <td>${before}</td><td class="metric-primary">${progress}</td><td>${due}</td><td class="${delayed ? 'metric-danger' : ''}">${delayed}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderStatusChart(filtered) {
+    const order = ['before', 'progress', 'completed', 'hold', 'delayed'];
+    const counts = Object.fromEntries(order.map(key => [key, filtered.filter(task => actualStatus(task) === key).length]));
+    const total = filtered.length || 1;
+    let cursor = 0;
+    const segments = order.map(key => {
+      const start = cursor;
+      cursor += counts[key] / total * 100;
+      return `${STATUS[key].color} ${start}% ${cursor}%`;
+    });
+    els.statusDonut.style.background = `conic-gradient(${segments.join(',')})`;
+    els.donutTotal.textContent = filtered.length;
+    els.statusLegend.innerHTML = order.map(key => `<div class="status-legend-row"><i style="background:${STATUS[key].color}"></i><span>${STATUS[key].label}</span><strong>${counts[key]}</strong></div>`).join('');
+  }
+
+  function renderTaskList() {
+    const filtered = getFilteredTasks({ ignorePeriod: activeView === 'tasks' || activeView === 'mine' });
+    els.taskListTitle.textContent = activeMineOnly ? '내 업무' : '전체 업무';
+    if (taskLayout === 'board') return renderBoard(filtered);
+    if (!filtered.length) {
+      els.taskListContainer.innerHTML = '<div class="empty-state">조건에 맞는 업무가 없습니다.</div>';
+      return;
+    }
+    els.taskListContainer.innerHTML = `<div class="table-scroll"><table class="task-table"><thead><tr>
+      <th>업무</th><th>담당자</th><th>기간</th><th>상태</th><th>진행률</th><th></th>
+    </tr></thead><tbody>${filtered.sort((a, b) => dateOnly(a.end) - dateOnly(b.end)).map(task => `<tr data-open-task="${escapeHTML(task.id)}">
+      <td class="task-title-cell"><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} ${priorityBadge(task)}</span></td>
+      <td><div class="assignee-chip"><div class="avatar">${initials(task.assignee)}</div>${escapeHTML(task.assignee)}</div></td>
+      <td>${formatShort(task.start)} ~ ${formatShort(task.end)}</td>
+      <td>${statusBadge(task)}</td><td><strong>${task.progress}%</strong></td>
+      <td class="row-actions"><button class="row-action" data-open-task="${escapeHTML(task.id)}">수정</button></td>
+    </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  function renderBoard(filtered) {
+    const columns = ['before', 'progress', 'completed', 'hold'];
+    els.taskListContainer.innerHTML = `<div class="board">${columns.map(status => {
+      const items = filtered.filter(task => actualStatus(task) === status || (status === 'progress' && actualStatus(task) === 'delayed'));
+      return `<section class="board-column"><div class="board-title">${STATUS[status].label}<span>${items.length}</span></div>${items.map(task => `
+        <article class="task-card" data-open-task="${escapeHTML(task.id)}">
+          <div class="task-card-top">${statusBadge(task)}${priorityBadge(task)}</div>
+          <h3>${escapeHTML(task.title)}</h3><p>${escapeHTML(task.project)} · ${escapeHTML(task.assignee)}</p>
+          <div class="mini-progress"><i style="width:${task.progress}%"></i></div>
+          <div class="task-card-footer"><span>${formatShort(task.start)} ~ ${formatShort(task.end)}</span><strong>${task.progress}%</strong></div>
+        </article>`).join('') || '<div class="empty-state">업무 없음</div>'}</section>`;
+    }).join('')}</div>`;
+  }
+
+  function renderCalendar() {
+    const days = Array.from({ length: 7 }, (_, index) => addDays(calendarAnchor, index));
+    els.weekRangeLabel.textContent = `${days[0].getFullYear()}.${days[0].getMonth() + 1}.${days[0].getDate()} ~ ${days[6].getMonth() + 1}.${days[6].getDate()}`;
+    els.calendarGrid.innerHTML = days.map(day => {
+      const dayTasks = tasks.filter(task => day >= dateOnly(task.start) && day <= dateOnly(task.end)).sort((a, b) => dateOnly(a.end) - dateOnly(b.end));
+      return `<section class="calendar-day ${isSameDay(day, new Date()) ? 'today' : ''}">
+        <div class="calendar-date"><strong>${['일', '월', '화', '수', '목', '금', '토'][day.getDay()]} ${day.getDate()}</strong><span>${dayTasks.length}개</span></div>
+        ${dayTasks.map(task => `<article class="calendar-task ${actualStatus(task)}" data-open-task="${escapeHTML(task.id)}"><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.assignee)} · ${task.progress}%</span></article>`).join('')}
+      </section>`;
+    }).join('');
+  }
+
+  function switchView(view) {
+    activeView = view;
+    activeMineOnly = view === 'mine';
+    $$('.nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === view));
+    $$('.view').forEach(viewElement => viewElement.classList.remove('active'));
+    if (view === 'dashboard') {
+      $('#dashboardView').classList.add('active');
+      els.pageTitle.textContent = '업무 대시보드';
+    } else if (view === 'calendar') {
+      $('#calendarView').classList.add('active');
+      els.pageTitle.textContent = '주간 일정';
+    } else {
+      $('#taskListView').classList.add('active');
+      els.pageTitle.textContent = activeMineOnly ? '내 업무' : '전체 업무';
+    }
+    els.sidebar.classList.remove('open');
+    renderAll();
+  }
+
+  function openTaskModal(task = null) {
+    els.taskForm.reset();
+    els.taskId.value = task?.id || '';
+    els.taskTitle.value = task?.title || '';
+    els.taskProject.value = task?.project || '';
+    els.taskAssignee.value = task?.assignee || currentUser;
+    els.taskStart.value = task?.start || iso(new Date());
+    els.taskEnd.value = task?.end || iso(addDays(new Date(), 1));
+    els.taskStatus.value = task?.status || 'before';
+    els.taskPriority.value = task?.priority || 'normal';
+    els.taskProgress.value = task?.progress ?? 0;
+    els.progressValue.textContent = `${els.taskProgress.value}%`;
+    els.taskDescription.value = task?.description || '';
+    els.taskLink.value = task?.link || '';
+    els.taskModalTitle.textContent = task ? '업무 수정' : '새 업무 등록';
+    els.deleteTaskBtn.classList.toggle('hidden', !task);
+    els.taskModal.classList.add('open');
+    els.taskModal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => els.taskTitle.focus(), 80);
+  }
+
+  function closeTaskModal() {
+    els.taskModal.classList.remove('open');
+    els.taskModal.setAttribute('aria-hidden', 'true');
+  }
+
+  async function submitTask(event) {
+    event.preventDefault();
+    if (!apiConfigured()) return showToast('먼저 config.js에 Apps Script 웹 앱 URL을 입력하세요.');
+    if (dateOnly(els.taskStart.value) > dateOnly(els.taskEnd.value)) return showToast('종료일은 시작일보다 빠를 수 없습니다.');
+
+    const payload = {
+      id: els.taskId.value,
+      title: els.taskTitle.value.trim(),
+      project: els.taskProject.value.trim(),
+      assignee: els.taskAssignee.value,
+      start: els.taskStart.value,
+      end: els.taskEnd.value,
+      status: els.taskStatus.value,
+      priority: els.taskPriority.value,
+      progress: Number(els.taskProgress.value),
+      description: els.taskDescription.value.trim(),
+      link: els.taskLink.value.trim()
+    };
+    if (payload.status === 'completed') payload.progress = 100;
+
+    els.saveTaskBtn.disabled = true;
+    els.deleteTaskBtn.disabled = true;
+    try {
+      await mutateAndRefresh('saveTask', payload, payload.id ? '업무를 수정했습니다.' : '새 업무를 등록했습니다.');
+      closeTaskModal();
+    } catch (error) {
+      console.error(error);
+      setConnectionState('error', '저장 확인 필요', error.message);
+      showToast(error.message);
+    } finally {
+      els.saveTaskBtn.disabled = false;
+      els.deleteTaskBtn.disabled = false;
+    }
+  }
+
+  async function deleteTask() {
+    const id = els.taskId.value;
+    if (!id || !confirm('이 업무를 삭제할까요?')) return;
+    els.saveTaskBtn.disabled = true;
+    els.deleteTaskBtn.disabled = true;
+    try {
+      await mutateAndRefresh('deleteTask', { id }, '업무를 삭제했습니다.');
+      closeTaskModal();
+    } catch (error) {
+      console.error(error);
+      setConnectionState('error', '삭제 확인 필요', error.message);
+      showToast(error.message);
+    } finally {
+      els.saveTaskBtn.disabled = false;
+      els.deleteTaskBtn.disabled = false;
+    }
+  }
+
+  function showToast(message) {
+    els.toast.textContent = message;
+    els.toast.classList.add('show');
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => els.toast.classList.remove('show'), 2600);
+  }
+
+  function bindEvents() {
+    $$('.nav-item').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
+    $('#mobileMenuBtn').addEventListener('click', () => els.sidebar.classList.toggle('open'));
+    $('#openTaskModalBtn').addEventListener('click', () => openTaskModal());
+    $('#closeTaskModalBtn').addEventListener('click', closeTaskModal);
+    $('#cancelTaskBtn').addEventListener('click', closeTaskModal);
+    els.taskModal.addEventListener('click', event => { if (event.target === els.taskModal) closeTaskModal(); });
+    els.taskForm.addEventListener('submit', submitTask);
+    els.deleteTaskBtn.addEventListener('click', deleteTask);
+    els.taskProgress.addEventListener('input', () => { els.progressValue.textContent = `${els.taskProgress.value}%`; });
+    els.taskStatus.addEventListener('change', () => {
+      if (els.taskStatus.value === 'completed') {
+        els.taskProgress.value = 100;
+        els.progressValue.textContent = '100%';
+      }
+    });
+    [els.assigneeFilter, els.statusFilter].forEach(element => element.addEventListener('change', renderAll));
+    els.globalSearch.addEventListener('input', renderAll);
+    $$('#periodSegment button').forEach(button => button.addEventListener('click', () => {
+      period = button.dataset.period;
+      $$('#periodSegment button').forEach(item => item.classList.toggle('active', item === button));
+      renderAll();
+    }));
+    $$('.view-switcher button').forEach(button => button.addEventListener('click', () => {
+      taskLayout = button.dataset.taskLayout;
+      $$('.view-switcher button').forEach(item => item.classList.toggle('active', item === button));
+      renderTaskList();
+    }));
+    document.addEventListener('click', event => {
+      const taskTarget = event.target.closest('[data-open-task]');
+      if (taskTarget) {
+        const task = tasks.find(item => item.id === taskTarget.dataset.openTask);
+        if (task) openTaskModal(task);
+      }
+      const jump = event.target.closest('[data-jump]');
+      if (jump) switchView(jump.dataset.jump);
+      const summary = event.target.closest('[data-summary-filter]');
+      if (summary) {
+        const key = summary.dataset.summaryFilter;
+        if (key === 'due') {
+          els.statusFilter.value = 'all';
+          period = 'week';
+        } else if (key !== 'total') {
+          els.statusFilter.value = key;
+        } else {
+          els.statusFilter.value = 'all';
+        }
+        switchView('tasks');
+      }
+    });
+    $('#prevWeekBtn').addEventListener('click', () => { calendarAnchor = addDays(calendarAnchor, -7); renderCalendar(); });
+    $('#nextWeekBtn').addEventListener('click', () => { calendarAnchor = addDays(calendarAnchor, 7); renderCalendar(); });
+    $('#todayWeekBtn').addEventListener('click', () => { calendarAnchor = startOfWeek(new Date()); renderCalendar(); });
+    els.refreshDataBtn.addEventListener('click', () => loadRemoteData());
+    els.currentUserSelect.addEventListener('change', () => {
+      currentUser = els.currentUserSelect.value;
+      localStorage.setItem(USER_KEY, currentUser);
+      renderAll();
+    });
+    els.changeAccessKeyBtn.addEventListener('click', () => {
+      const current = localStorage.getItem(TOKEN_KEY) || '';
+      const next = window.prompt('새 팀 접속키를 입력하세요.', current) || '';
+      if (!next.trim()) return;
+      localStorage.setItem(TOKEN_KEY, next.trim());
+      loadRemoteData();
+    });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') closeTaskModal(); });
+  }
+
+  async function init() {
+    const now = new Date();
+    els.todayLabel.textContent = `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일 ${['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'][now.getDay()]}`;
+    readCache();
+    ensureCurrentUser();
+    bindEvents();
+    renderAll();
+    await loadRemoteData();
+  }
+
+  init();
+})();
