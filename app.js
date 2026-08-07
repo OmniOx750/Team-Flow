@@ -14,7 +14,7 @@
     delayed: { label: '지연', color: '#e14a55' }
   };
   const PRIORITY = { low: '낮음', normal: '보통', high: '높음', urgent: '긴급' };
-  const REQUIRED_API_VERSION = '2.0.0';
+  const REQUIRED_API_VERSION = '2.1.0';
   const DEFAULT_AVATAR_COLOR = '#2f6bff';
   const AVATAR_PALETTE = ['#2f6bff', '#5b8def', '#7c5cff', '#ff5c7c', '#ef6c00', '#16a34a', '#10b981', '#0ea5e9', '#8b5cf6', '#ec4899', '#f59e0b', '#6b7280'];
 
@@ -128,7 +128,26 @@
     cancelMemberEditBtn: $('#cancelMemberEditBtn'),
     adminMemberList: $('#adminMemberList'),
     adminMemberCount: $('#adminMemberCount'),
-    adminMemberTeamName: $('#adminMemberTeamName')
+    adminMemberTeamName: $('#adminMemberTeamName'),
+    teamShortcutSection: $('#teamShortcutSection'),
+    teamShortcutTitle: $('#teamShortcutTitle'),
+    teamShortcutList: $('#teamShortcutList'),
+    openTeamShortcutModalBtn: $('#openTeamShortcutModalBtn'),
+    teamShortcutModal: $('#teamShortcutModal'),
+    teamShortcutModalTeamName: $('#teamShortcutModalTeamName'),
+    closeTeamShortcutModalBtn: $('#closeTeamShortcutModalBtn'),
+    doneTeamShortcutBtn: $('#doneTeamShortcutBtn'),
+    teamShortcutForm: $('#teamShortcutForm'),
+    teamShortcutId: $('#teamShortcutId'),
+    teamShortcutName: $('#teamShortcutName'),
+    teamShortcutUrl: $('#teamShortcutUrl'),
+    teamShortcutIcon: $('#teamShortcutIcon'),
+    teamShortcutSortOrder: $('#teamShortcutSortOrder'),
+    teamShortcutActive: $('#teamShortcutActive'),
+    teamShortcutNewTab: $('#teamShortcutNewTab'),
+    saveTeamShortcutBtn: $('#saveTeamShortcutBtn'),
+    cancelTeamShortcutEditBtn: $('#cancelTeamShortcutEditBtn'),
+    teamShortcutManagerList: $('#teamShortcutManagerList')
   };
 
   let tasks = [];
@@ -136,6 +155,7 @@
   let meetings = [];
   let teamMembers = [];
   let projectCategories = [];
+  let teamShortcuts = [];
   let companyTeams = [];
   let adminMembers = [];
   let authState = { role: 'team', isAdmin: false, teamId: '', teamName: '' };
@@ -269,6 +289,30 @@
   }
 
 
+  function normalizeTeamShortcut(shortcut = {}) {
+    return {
+      id: String(shortcut.id || ''),
+      name: String(shortcut.name || '').trim().slice(0, 50),
+      url: String(shortcut.url || '').trim().slice(0, 500),
+      icon: String(shortcut.icon || '🔗').trim().slice(0, 8) || '🔗',
+      active: shortcut.active === true || String(shortcut.active).toLowerCase() === 'true',
+      sortOrder: Number(shortcut.sortOrder) || 999,
+      openNewTab: shortcut.openNewTab !== false && String(shortcut.openNewTab).toLowerCase() !== 'false',
+      createdAt: String(shortcut.createdAt || ''),
+      updatedAt: String(shortcut.updatedAt || ''),
+      teamId: String(shortcut.teamId || '')
+    };
+  }
+
+  function safeShortcutUrl(value) {
+    try {
+      const url = new URL(String(value || '').trim());
+      return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+    } catch (error) {
+      return '';
+    }
+  }
+
 
   function normalizeMember(member = {}) {
     return {
@@ -372,6 +416,7 @@
     teamMembers = [];
     adminMembers = [];
     projectCategories = [];
+    teamShortcuts = [];
     companyTeams = [];
     return false;
   }
@@ -531,7 +576,7 @@
     })));
   }
 
-  function mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers = [], remoteMeetings = [], remoteProjectCategories = [], remoteTeams = [], remoteAdminMembers = []) {
+  function mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers = [], remoteMeetings = [], remoteProjectCategories = [], remoteTeams = [], remoteAdminMembers = [], remoteTeamShortcuts = []) {
     if (action === 'deleteTask') {
       return !remoteTasks.some(task => task.id === payload.id)
         && !remoteComments.some(comment => comment.taskId === payload.id);
@@ -565,6 +610,16 @@
       return Boolean(savedCategory
         && savedCategory.name === payload.name
         && Boolean(savedCategory.active) === Boolean(payload.active));
+    }
+    if (action === 'saveTeamShortcut') {
+      const savedShortcut = remoteTeamShortcuts.find(shortcut => shortcut.id === payload.id);
+      return Boolean(savedShortcut
+        && savedShortcut.name === payload.name
+        && savedShortcut.url === safeShortcutUrl(payload.url)
+        && savedShortcut.icon === (String(payload.icon || '🔗').trim().slice(0, 8) || '🔗')
+        && Boolean(savedShortcut.active) === Boolean(payload.active)
+        && Boolean(savedShortcut.openNewTab) === Boolean(payload.openNewTab)
+        && Number(savedShortcut.sortOrder) === Number(payload.sortOrder));
     }
     if (action === 'deleteMeeting') return !remoteMeetings.some(meeting => meeting.id === payload.id);
     if (action === 'saveMeeting') {
@@ -689,6 +744,7 @@
       teamMembers = Array.isArray(response.members) ? response.members.map(normalizeMember).filter(member => member.active) : [];
       adminMembers = Array.isArray(response.allMembers) ? response.allMembers.map(normalizeMember) : [...teamMembers];
       projectCategories = Array.isArray(response.projectCategories) ? response.projectCategories.map(normalizeProjectCategory) : [];
+      teamShortcuts = Array.isArray(response.teamShortcuts) ? response.teamShortcuts.map(normalizeTeamShortcut) : [];
 
       ensureCurrentUser();
       renderAll();
@@ -702,6 +758,7 @@
       teamMembers = [];
       adminMembers = [];
       projectCategories = [];
+      teamShortcuts = [];
       companyTeams = [];
       authState = { role: 'team', isAdmin: false, teamId: '', teamName: '' };
       setConnectionState('error', 'Google Sheets 연결 실패', error.message);
@@ -733,9 +790,10 @@
         const remoteMembers = Array.isArray(response.members) ? response.members.map(normalizeMember).filter(member => member.active) : [];
         const remoteAdminMembers = Array.isArray(response.allMembers) ? response.allMembers.map(normalizeMember) : [...remoteMembers];
         const remoteProjectCategories = Array.isArray(response.projectCategories) ? response.projectCategories.map(normalizeProjectCategory) : [];
+        const remoteTeamShortcuts = Array.isArray(response.teamShortcuts) ? response.teamShortcuts.map(normalizeTeamShortcut) : [];
         const remoteTeams = Array.isArray(response.teams) ? response.teams.map(normalizeTeam) : companyTeams;
 
-        if (!mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers, remoteMeetings, remoteProjectCategories, remoteTeams, remoteAdminMembers)) {
+        if (!mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers, remoteMeetings, remoteProjectCategories, remoteTeams, remoteAdminMembers, remoteTeamShortcuts)) {
           lastError = new Error('저장 내용이 아직 Google Sheets에 반영되지 않았습니다.');
           continue;
         }
@@ -756,6 +814,7 @@
         teamMembers = remoteMembers;
         adminMembers = remoteAdminMembers;
         projectCategories = remoteProjectCategories;
+        teamShortcuts = remoteTeamShortcuts;
         companyTeams = remoteTeams;
         ensureCurrentUser();
         renderAll();
@@ -825,6 +884,7 @@
     renderCalendar();
     renderMeetingList();
     renderAdmin();
+    renderTeamShortcuts();
     updateProfile();
     updateWorkspaceContext();
   }
@@ -950,6 +1010,132 @@
   }
 
 
+  function sortedTeamShortcuts() {
+    return [...teamShortcuts].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'ko'));
+  }
+
+  function renderTeamShortcuts() {
+    if (!els.teamShortcutSection || !els.teamShortcutList) return;
+    const teamName = authState.teamName || '현재 팀';
+    if (els.teamShortcutTitle) els.teamShortcutTitle.textContent = teamName;
+    const activeShortcuts = sortedTeamShortcuts().filter(shortcut => shortcut.active && safeShortcutUrl(shortcut.url));
+    els.teamShortcutList.innerHTML = activeShortcuts.length ? activeShortcuts.map(shortcut => {
+      const href = safeShortcutUrl(shortcut.url);
+      const target = shortcut.openNewTab ? ' target="_blank" rel="noopener noreferrer"' : '';
+      return `<a class="team-shortcut-link" href="${escapeHTML(href)}"${target} title="${escapeHTML(shortcut.name)}">
+        <span class="team-shortcut-icon" aria-hidden="true">${escapeHTML(shortcut.icon || '🔗')}</span>
+        <span>${escapeHTML(shortcut.name)}</span>
+        <i aria-hidden="true">↗</i>
+      </a>`;
+    }).join('') : '<div class="team-shortcut-empty">등록된 바로가기가 없습니다.</div>';
+  }
+
+  function renderTeamShortcutManagerList() {
+    if (!els.teamShortcutManagerList) return;
+    const shortcuts = sortedTeamShortcuts();
+    els.teamShortcutManagerList.innerHTML = shortcuts.length ? shortcuts.map(shortcut => `
+      <div class="shortcut-manager-row ${shortcut.active ? '' : 'inactive'}">
+        <div class="shortcut-manager-icon">${escapeHTML(shortcut.icon || '🔗')}</div>
+        <div class="shortcut-manager-copy">
+          <strong>${escapeHTML(shortcut.name)}</strong>
+          <small>${escapeHTML(shortcut.url)} · 순서 ${shortcut.sortOrder}${shortcut.openNewTab ? ' · 새 탭' : ''}${shortcut.active ? '' : ' · 숨김'}</small>
+        </div>
+        <div class="shortcut-manager-actions">
+          <button type="button" data-edit-team-shortcut="${escapeHTML(shortcut.id)}">수정</button>
+          <button type="button" data-toggle-team-shortcut="${escapeHTML(shortcut.id)}">${shortcut.active ? '숨기기' : '다시 사용'}</button>
+        </div>
+      </div>`).join('') : '<div class="category-empty">등록된 바로가기가 없습니다.</div>';
+  }
+
+  function resetTeamShortcutForm() {
+    if (!els.teamShortcutForm) return;
+    els.teamShortcutForm.reset();
+    els.teamShortcutId.value = '';
+    els.teamShortcutName.value = '';
+    els.teamShortcutUrl.value = '';
+    els.teamShortcutIcon.value = '🔗';
+    els.teamShortcutSortOrder.value = Math.max(0, ...teamShortcuts.map(shortcut => Number(shortcut.sortOrder) || 0)) + 1;
+    els.teamShortcutActive.checked = true;
+    els.teamShortcutNewTab.checked = true;
+    els.saveTeamShortcutBtn.textContent = '＋ 바로가기 추가';
+    els.cancelTeamShortcutEditBtn.classList.add('hidden');
+  }
+
+  function openTeamShortcutModal() {
+    resetTeamShortcutForm();
+    renderTeamShortcutManagerList();
+    if (els.teamShortcutModalTeamName) els.teamShortcutModalTeamName.textContent = authState.teamName || '현재 팀';
+    els.teamShortcutModal.classList.add('open');
+    els.teamShortcutModal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => els.teamShortcutName.focus(), 80);
+  }
+
+  function closeTeamShortcutModal() {
+    els.teamShortcutModal?.classList.remove('open');
+    els.teamShortcutModal?.setAttribute('aria-hidden', 'true');
+  }
+
+  function editTeamShortcut(shortcutId) {
+    const shortcut = teamShortcuts.find(item => item.id === shortcutId);
+    if (!shortcut) return;
+    els.teamShortcutId.value = shortcut.id;
+    els.teamShortcutName.value = shortcut.name;
+    els.teamShortcutUrl.value = shortcut.url;
+    els.teamShortcutIcon.value = shortcut.icon || '🔗';
+    els.teamShortcutSortOrder.value = shortcut.sortOrder;
+    els.teamShortcutActive.checked = shortcut.active;
+    els.teamShortcutNewTab.checked = shortcut.openNewTab;
+    els.saveTeamShortcutBtn.textContent = '바로가기 저장';
+    els.cancelTeamShortcutEditBtn.classList.remove('hidden');
+    els.teamShortcutName.focus();
+  }
+
+  async function submitTeamShortcut(event) {
+    event.preventDefault();
+    const name = els.teamShortcutName.value.trim().replace(/\s+/g, ' ');
+    const url = safeShortcutUrl(els.teamShortcutUrl.value);
+    if (!name) return showToast('바로가기 이름을 입력하세요.');
+    if (!url) return showToast('http:// 또는 https://로 시작하는 올바른 URL을 입력하세요.');
+    const editingId = els.teamShortcutId.value.trim();
+    const payload = {
+      id: editingId || `TS${Date.now()}${Math.random().toString(16).slice(2, 8)}`,
+      name,
+      url,
+      icon: els.teamShortcutIcon.value.trim().slice(0, 8) || '🔗',
+      sortOrder: Math.max(1, Number(els.teamShortcutSortOrder.value) || 1),
+      active: els.teamShortcutActive.checked,
+      openNewTab: els.teamShortcutNewTab.checked
+    };
+    const duplicate = teamShortcuts.find(item => item.id !== payload.id && item.name.toLocaleLowerCase('ko-KR') === name.toLocaleLowerCase('ko-KR'));
+    if (duplicate) return showToast('같은 이름의 바로가기가 이미 있습니다.');
+    els.saveTeamShortcutBtn.disabled = true;
+    try {
+      await mutateAndRefresh('saveTeamShortcut', payload, editingId ? '바로가기를 수정했습니다.' : '바로가기를 추가했습니다.');
+      resetTeamShortcutForm();
+      renderTeamShortcutManagerList();
+    } catch (error) {
+      console.error(error);
+      setConnectionState('error', '바로가기 저장 확인 필요', error.message);
+      showToast(error.message);
+    } finally {
+      els.saveTeamShortcutBtn.disabled = false;
+    }
+  }
+
+  async function toggleTeamShortcut(shortcutId) {
+    const shortcut = teamShortcuts.find(item => item.id === shortcutId);
+    if (!shortcut) return;
+    const payload = { ...shortcut, active: !shortcut.active };
+    try {
+      await mutateAndRefresh('saveTeamShortcut', payload, payload.active ? '바로가기를 다시 표시합니다.' : '바로가기를 숨겼습니다.');
+      renderTeamShortcutManagerList();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message);
+    }
+  }
+
+
   function updateWorkspaceContext() {
     if (els.currentTeamName) els.currentTeamName.textContent = authState.teamName || '팀 확인 중';
 
@@ -965,6 +1151,7 @@
     }
 
     if (els.adminMemberTeamName) els.adminMemberTeamName.textContent = authState.teamName || '현재 팀';
+    if (els.teamShortcutModalTeamName) els.teamShortcutModalTeamName.textContent = authState.teamName || '현재 팀';
     if (els.adminMemberTeamLabel && !els.adminMemberId?.value && !els.adminMemberTeamLabel.value) {
       els.adminMemberTeamLabel.value = authState.teamName || '';
     }
@@ -1983,6 +2170,17 @@
         return;
       }
 
+      const shortcutEdit = event.target.closest('[data-edit-team-shortcut]');
+      if (shortcutEdit) {
+        editTeamShortcut(shortcutEdit.dataset.editTeamShortcut);
+        return;
+      }
+      const shortcutToggle = event.target.closest('[data-toggle-team-shortcut]');
+      if (shortcutToggle) {
+        toggleTeamShortcut(shortcutToggle.dataset.toggleTeamShortcut);
+        return;
+      }
+
       const avatarSwatch = event.target.closest('[data-avatar-color]');
       if (avatarSwatch) {
         event.preventDefault();
@@ -2084,6 +2282,14 @@
       meetingVisibleCount = 30;
       loadRemoteData();
     });
+    els.openTeamShortcutModalBtn?.addEventListener('click', openTeamShortcutModal);
+    els.teamShortcutForm?.addEventListener('submit', submitTeamShortcut);
+    els.cancelTeamShortcutEditBtn?.addEventListener('click', resetTeamShortcutForm);
+    els.closeTeamShortcutModalBtn?.addEventListener('click', closeTeamShortcutModal);
+    els.doneTeamShortcutBtn?.addEventListener('click', closeTeamShortcutModal);
+    els.teamShortcutModal?.addEventListener('click', event => {
+      if (event.target === els.teamShortcutModal) closeTeamShortcutModal();
+    });
     $$('[data-open-project-categories]').forEach(button => button.addEventListener('click', openProjectCategoryModal));
     els.projectCategoryForm?.addEventListener('submit', submitProjectCategory);
     els.teamAdminForm?.addEventListener('submit', submitTeamAdmin);
@@ -2110,7 +2316,8 @@
     });
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
-      if (els.projectCategoryModal?.classList.contains('open')) closeProjectCategoryModal();
+      if (els.teamShortcutModal?.classList.contains('open')) closeTeamShortcutModal();
+      else if (els.projectCategoryModal?.classList.contains('open')) closeProjectCategoryModal();
       else { closeTaskModal(); closeMeetingModal(); }
     });
   }
