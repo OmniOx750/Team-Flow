@@ -1418,3 +1418,78 @@ select, input, textarea { border: 1px solid var(--line); border-radius: 11px; ba
   .project-category-copy { grid-template-columns: 9px minmax(0, 1fr); }
   .project-category-copy small { display: none; }
 }
+
+/* TEAM FLOW v2 · multi-team + admin */
+.workspace-context {
+  margin-bottom: 16px; padding: 12px; border: 1px solid var(--line); border-radius: 15px;
+  background: rgba(248,249,252,.88);
+}
+.workspace-context > span { display:block; color:var(--muted); font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+.workspace-context > strong { display:block; margin-top:5px; font-size:13px; }
+.workspace-context .sidebar-select { margin-top:9px; }
+.sidebar-select-label { display:block; margin-top:14px; margin-bottom:6px; color:var(--muted); font-size:11px; font-weight:700; }
+.sidebar-select { width:100%; height:38px; padding:0 10px; }
+
+.admin-page-grid { display:grid; grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr); gap:18px; align-items:start; }
+.admin-panel { min-width:0; }
+.admin-inline-form, .member-admin-form {
+  margin-top:16px; padding:16px; border:1px solid var(--line); border-radius:18px; background:#fafbfc;
+}
+.admin-inline-form { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:end; }
+.member-admin-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.admin-inline-form label, .member-admin-form label { display:grid; gap:6px; }
+.admin-inline-form label > span, .member-admin-form label > span { color:var(--muted); font-size:11px; font-weight:700; }
+.admin-inline-form input, .member-admin-form input { width:100%; min-height:42px; padding:0 12px; }
+.admin-form-actions { display:flex; justify-content:flex-end; gap:8px; }
+.admin-form-actions.full-field { grid-column:1 / -1; }
+.admin-checkbox-field { align-self:end; display:flex !important; align-items:center; gap:8px !important; min-height:42px; }
+.admin-checkbox-field input { width:18px; min-height:18px; }
+.member-color-field input[type="color"] { padding:5px; }
+
+.credential-reveal {
+  margin-top:14px; padding:15px 16px; display:flex; align-items:center; justify-content:space-between; gap:14px;
+  border:1px solid #cbd8ff; border-radius:16px; background:#f2f6ff;
+}
+.credential-reveal span, .credential-reveal small { display:block; color:var(--muted); font-size:11px; }
+.credential-reveal strong { display:block; margin:4px 0; font-size:18px; letter-spacing:.06em; }
+
+.admin-list-head { margin:20px 0 9px; display:flex; justify-content:space-between; align-items:center; }
+.admin-list-head strong { font-size:13px; }
+.admin-list-head span { color:var(--muted); font-size:11px; }
+.admin-team-list, .admin-member-list { display:grid; gap:8px; }
+.admin-team-row, .admin-member-row {
+  display:flex; align-items:center; gap:11px; padding:12px 13px; border:1px solid var(--line); border-radius:15px; background:#fff;
+}
+.admin-team-row.current { border-color:#c9d6ff; background:#f7f9ff; }
+.admin-team-row.inactive, .admin-member-row.inactive { opacity:.58; }
+.admin-team-copy, .admin-member-copy { min-width:0; flex:1; display:flex; align-items:center; gap:10px; }
+.admin-member-copy { display:block; }
+.admin-team-copy strong, .admin-member-copy strong { display:block; font-size:13px; }
+.admin-member-copy strong span { color:var(--muted); font-size:11px; font-weight:600; }
+.admin-team-copy small, .admin-member-copy small { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
+.admin-team-icon, .admin-member-avatar {
+  --avatar-color: var(--primary); flex:0 0 auto; width:34px; height:34px; border-radius:50%; display:grid; place-items:center;
+  background:color-mix(in srgb,var(--avatar-color) 14%,white); color:var(--avatar-color); font-size:11px; font-weight:800;
+}
+.admin-team-icon { background:#edf1f8; color:#4d586a; }
+.admin-row-actions { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
+.admin-row-actions button { border:0; border-radius:9px; padding:7px 9px; background:#f0f2f5; color:#4b5260; font-size:10px; font-weight:700; }
+.admin-row-actions button:hover { background:#e7eaf0; }
+.admin-row-actions .danger-text { color:var(--red); background:var(--red-soft); }
+
+.meeting-load-more {
+  width:100%; margin-top:10px; min-height:48px; border:1px solid var(--line); border-radius:15px; background:#fff;
+  color:#3c4452; font-weight:700;
+}
+.meeting-load-more span { margin-left:6px; color:var(--muted); font-size:11px; font-weight:600; }
+.meeting-load-more:hover { background:#f7f8fa; }
+
+@media (max-width: 1080px) {
+  .admin-page-grid { grid-template-columns:1fr; }
+}
+@media (max-width: 720px) {
+  .admin-inline-form, .member-admin-form { grid-template-columns:1fr; }
+  .admin-form-actions.full-field { grid-column:auto; }
+  .admin-team-row, .admin-member-row { align-items:flex-start; flex-wrap:wrap; }
+  .admin-row-actions { width:100%; justify-content:flex-start; padding-left:45px; }
+}

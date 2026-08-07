@@ -2,9 +2,10 @@
   'use strict';
 
   const CONFIG = window.TEAM_FLOW_CONFIG || {};
-  const CACHE_KEY = 'teamFlowRemoteCacheV5';
+  const CACHE_KEY = 'teamFlowRemoteCacheV6';
   const USER_KEY = 'teamFlowCurrentUserV2';
   const TOKEN_KEY = 'teamFlowAccessTokenV2';
+  const ACTIVE_TEAM_KEY = 'teamFlowActiveTeamV2';
   const STATUS = {
     before: { label: '진행 전', color: '#89909d' },
     progress: { label: '진행 중', color: '#2f6bff' },
@@ -13,7 +14,7 @@
     delayed: { label: '지연', color: '#e14a55' }
   };
   const PRIORITY = { low: '낮음', normal: '보통', high: '높음', urgent: '긴급' };
-  const REQUIRED_API_VERSION = '1.7.0';
+  const REQUIRED_API_VERSION = '2.0.0';
   const DEFAULT_AVATAR_COLOR = '#2f6bff';
   const AVATAR_PALETTE = ['#2f6bff', '#5b8def', '#7c5cff', '#ff5c7c', '#ef6c00', '#16a34a', '#10b981', '#0ea5e9', '#8b5cf6', '#ec4899', '#f59e0b', '#6b7280'];
 
@@ -101,7 +102,33 @@
     projectCategoryList: $('#projectCategoryList'),
     addProjectCategoryBtn: $('#addProjectCategoryBtn'),
     closeProjectCategoryModalBtn: $('#closeProjectCategoryModalBtn'),
-    doneProjectCategoryBtn: $('#doneProjectCategoryBtn')
+    doneProjectCategoryBtn: $('#doneProjectCategoryBtn'),
+    adminNavItem: $('#adminNavItem'),
+    currentTeamName: $('#currentTeamName'),
+    adminTeamSelect: $('#adminTeamSelect'),
+    teamAdminForm: $('#teamAdminForm'),
+    adminTeamId: $('#adminTeamId'),
+    adminTeamName: $('#adminTeamName'),
+    saveTeamAdminBtn: $('#saveTeamAdminBtn'),
+    cancelTeamEditBtn: $('#cancelTeamEditBtn'),
+    adminTeamList: $('#adminTeamList'),
+    adminTeamCount: $('#adminTeamCount'),
+    credentialReveal: $('#credentialReveal'),
+    credentialRevealCode: $('#credentialRevealCode'),
+    copyCredentialBtn: $('#copyCredentialBtn'),
+    memberAdminForm: $('#memberAdminForm'),
+    adminMemberId: $('#adminMemberId'),
+    adminMemberName: $('#adminMemberName'),
+    adminMemberPosition: $('#adminMemberPosition'),
+    adminMemberTeamLabel: $('#adminMemberTeamLabel'),
+    adminMemberSortOrder: $('#adminMemberSortOrder'),
+    adminMemberColor: $('#adminMemberColor'),
+    adminMemberActive: $('#adminMemberActive'),
+    saveMemberAdminBtn: $('#saveMemberAdminBtn'),
+    cancelMemberEditBtn: $('#cancelMemberEditBtn'),
+    adminMemberList: $('#adminMemberList'),
+    adminMemberCount: $('#adminMemberCount'),
+    adminMemberTeamName: $('#adminMemberTeamName')
   };
 
   let tasks = [];
@@ -109,7 +136,12 @@
   let meetings = [];
   let teamMembers = [];
   let projectCategories = [];
+  let companyTeams = [];
+  let adminMembers = [];
+  let authState = { role: 'team', isAdmin: false, teamId: '', teamName: '' };
+  let activeTeamId = localStorage.getItem(ACTIVE_TEAM_KEY) || '';
   let currentUser = localStorage.getItem(USER_KEY) || '';
+  let meetingVisibleCount = 30;
   let activeView = 'dashboard';
   let taskLayout = 'list';
   let period = 'week';
@@ -208,7 +240,8 @@
       link: String(task.link || ''),
       createdAt: String(task.createdAt || ''),
       updatedAt: String(task.updatedAt || ''),
-      subtasks: normalizeSubtasks(task.subtasks)
+      subtasks: normalizeSubtasks(task.subtasks),
+      teamId: String(task.teamId || '')
     };
   }
 
@@ -218,7 +251,8 @@
       taskId: String(comment.taskId || ''),
       author: String(comment.author || ''),
       content: String(comment.content || '').slice(0, 1000),
-      createdAt: String(comment.createdAt || '')
+      createdAt: String(comment.createdAt || ''),
+      teamId: String(comment.teamId || '')
     };
   }
 
@@ -229,10 +263,39 @@
       active: category.active === true || String(category.active).toLowerCase() === 'true',
       sortOrder: Number(category.sortOrder) || 999,
       createdAt: String(category.createdAt || ''),
-      updatedAt: String(category.updatedAt || '')
+      updatedAt: String(category.updatedAt || ''),
+      teamId: String(category.teamId || '')
     };
   }
 
+
+
+  function normalizeMember(member = {}) {
+    return {
+      id: String(member.id || ''),
+      name: String(member.name || '').trim(),
+      position: String(member.position || '').trim(),
+      team: String(member.team || '').trim(),
+      active: member.active !== false && String(member.active).toLowerCase() !== 'false',
+      sortOrder: Number(member.sortOrder) || 999,
+      avatarColor: normalizeColor(member.avatarColor, member.name),
+      teamId: String(member.teamId || ''),
+      createdAt: String(member.createdAt || ''),
+      updatedAt: String(member.updatedAt || '')
+    };
+  }
+
+  function normalizeTeam(team = {}) {
+    return {
+      teamId: String(team.teamId || ''),
+      teamName: String(team.teamName || '').trim(),
+      active: team.active !== false && String(team.active).toLowerCase() !== 'false',
+      sortOrder: Number(team.sortOrder) || 999,
+      codeVersion: String(team.codeVersion || ''),
+      createdAt: String(team.createdAt || ''),
+      updatedAt: String(team.updatedAt || '')
+    };
+  }
 
   function normalizeMeetingActions(value) {
     let source = value;
@@ -270,7 +333,8 @@
       decisions: String(meeting.decisions || ''),
       actionItems: normalizeMeetingActions(meeting.actionItems),
       createdAt: String(meeting.createdAt || ''),
-      updatedAt: String(meeting.updatedAt || '')
+      updatedAt: String(meeting.updatedAt || ''),
+      teamId: String(meeting.teamId || '')
     };
   }
 
@@ -300,33 +364,20 @@
   }
 
   function readCache() {
-    try {
-      const cached = JSON.parse(localStorage.getItem(CACHE_KEY));
-      if (cached && Array.isArray(cached.tasks)) {
-        tasks = cached.tasks.map(normalizeTask);
-        comments = Array.isArray(cached.comments) ? cached.comments.map(normalizeComment) : [];
-        meetings = Array.isArray(cached.meetings) ? cached.meetings.map(normalizeMeeting) : [];
-        teamMembers = Array.isArray(cached.members) ? cached.members : [];
-        projectCategories = Array.isArray(cached.projectCategories) ? cached.projectCategories.map(normalizeProjectCategory) : [];
-        return true;
-      }
-    } catch (error) {
-      console.warn('캐시를 읽지 못했습니다.', error);
-    }
-    tasks = sampleTasks();
+    // v2부터 팀 간 데이터 노출을 막기 위해 업무/회의록 본문을 브라우저에 캐시하지 않습니다.
+    localStorage.removeItem(CACHE_KEY);
+    tasks = [];
     comments = [];
     meetings = [];
-    projectCategories = ['전시회/학회', 'Material', '영상/콘텐츠', '웹사이트', '제품/브랜딩', '영업지원', '정부지원사업', '기타'].map((name, index) => normalizeProjectCategory({ id: `PC${index + 1}`, name, active: true, sortOrder: index + 1 }));
-    teamMembers = [
-      { name: '김마케팅', position: '프로', team: '마케팅팀', active: true },
-      { name: '박디자인', position: '프로', team: '마케팅팀', active: true },
-      { name: '이콘텐츠', position: '프로', team: '마케팅팀', active: true }
-    ];
+    teamMembers = [];
+    adminMembers = [];
+    projectCategories = [];
+    companyTeams = [];
     return false;
   }
 
   function writeCache() {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ tasks, comments, meetings, members: teamMembers, projectCategories, savedAt: new Date().toISOString() }));
+    // 멀티팀 보안상 민감한 팀 데이터는 localStorage에 저장하지 않습니다.
   }
 
   function escapeHTML(value = '') {
@@ -480,7 +531,7 @@
     })));
   }
 
-  function mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers = [], remoteMeetings = [], remoteProjectCategories = []) {
+  function mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers = [], remoteMeetings = [], remoteProjectCategories = [], remoteTeams = [], remoteAdminMembers = []) {
     if (action === 'deleteTask') {
       return !remoteTasks.some(task => task.id === payload.id)
         && !remoteComments.some(comment => comment.taskId === payload.id);
@@ -493,6 +544,21 @@
     if (action === 'saveMemberProfile') {
       const savedMember = remoteMembers.find(member => member.name === payload.name);
       return Boolean(savedMember && normalizeColor(savedMember.avatarColor, savedMember.name) === normalizeColor(payload.avatarColor, payload.name));
+    }
+    if (action === 'saveMemberAdmin') {
+      const savedMember = remoteAdminMembers.find(member => member.id === payload.id);
+      return Boolean(savedMember
+        && savedMember.name === payload.name
+        && savedMember.position === payload.position
+        && Boolean(savedMember.active) === Boolean(payload.active)
+        && Number(savedMember.sortOrder) === Number(payload.sortOrder));
+    }
+    if (action === 'saveTeam') {
+      const savedTeam = remoteTeams.find(team => team.teamId === payload.teamId);
+      return Boolean(savedTeam
+        && savedTeam.teamName === payload.teamName
+        && Boolean(savedTeam.active) === Boolean(payload.active)
+        && String(savedTeam.codeVersion || '') === String(payload.codeVersion || savedTeam.codeVersion || ''));
     }
     if (action === 'saveProjectCategory') {
       const savedCategory = remoteProjectCategories.find(category => category.id === payload.id);
@@ -524,7 +590,7 @@
   function getAccessToken({ ask = false } = {}) {
     let token = localStorage.getItem(TOKEN_KEY) || '';
     if (!token && ask) {
-      token = window.prompt('TEAM FLOW 팀 접속키를 입력하세요.\n관리자가 Apps Script에서 확인한 접속키입니다.') || '';
+      token = window.prompt('TEAM FLOW 팀 접속코드 또는 관리자 접속키를 입력하세요.') || '';
       token = token.trim();
       if (token) localStorage.setItem(TOKEN_KEY, token);
     }
@@ -542,7 +608,7 @@
     return new Promise((resolve, reject) => {
       if (!apiConfigured()) return reject(new Error('config.js에 Apps Script 웹 앱 URL을 입력하세요.'));
       const token = getAccessToken({ ask: true });
-      if (!token) return reject(new Error('팀 접속키가 필요합니다.'));
+      if (!token) return reject(new Error('접속코드가 필요합니다.'));
 
       const callbackName = `__teamFlowCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       const script = document.createElement('script');
@@ -566,6 +632,7 @@
       url.searchParams.set('action', action);
       url.searchParams.set('callback', callbackName);
       url.searchParams.set('token', token);
+      if (activeTeamId) url.searchParams.set('teamId', activeTeamId);
       url.searchParams.set('_', Date.now().toString());
       script.src = url.toString();
       script.async = true;
@@ -576,7 +643,7 @@
   async function postMutation(action, payload) {
     if (!apiConfigured()) throw new Error('config.js에 Apps Script 웹 앱 URL을 입력하세요.');
     const token = getAccessToken({ ask: true });
-    if (!token) throw new Error('팀 접속키가 필요합니다.');
+    if (!token) throw new Error('접속코드가 필요합니다.');
 
     await fetch(CONFIG.API_URL, {
       method: 'POST',
@@ -585,36 +652,58 @@
       cache: 'no-store',
       referrerPolicy: 'no-referrer',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify({ action, token, payload })
+      body: JSON.stringify({ action, token, teamId: activeTeamId, payload })
     });
   }
 
   async function loadRemoteData({ silent = false } = {}) {
     if (isSyncing) return;
     if (!apiConfigured()) {
-      setConnectionState('offline', 'Google Sheets 설정 필요', 'config.js에 Apps Script 웹 앱 URL을 붙여넣으세요. 현재는 샘플 화면입니다.');
+      setConnectionState('offline', 'Google Sheets 설정 필요', 'config.js에 Apps Script 웹 앱 URL을 붙여넣으세요.');
       renderAll();
       return;
     }
 
     isSyncing = true;
     els.refreshDataBtn.disabled = true;
-    if (!silent) setConnectionState('loading', 'Google Sheets 동기화 중', '팀 공용 업무를 불러오고 있습니다.');
+    if (!silent) setConnectionState('loading', 'Google Sheets 동기화 중', '현재 팀의 업무와 회의록을 불러오고 있습니다.');
     try {
       const response = await jsonpRequest('getData');
       assertApiVersion(response);
+
+      authState = {
+        role: String(response.auth?.role || 'team'),
+        isAdmin: Boolean(response.auth?.isAdmin),
+        teamId: String(response.auth?.teamId || ''),
+        teamName: String(response.auth?.teamName || '')
+      };
+      if (authState.teamId) {
+        activeTeamId = authState.teamId;
+        localStorage.setItem(ACTIVE_TEAM_KEY, activeTeamId);
+      }
+
+      companyTeams = Array.isArray(response.teams) ? response.teams.map(normalizeTeam) : [];
       tasks = Array.isArray(response.tasks) ? response.tasks.map(normalizeTask) : [];
       comments = Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [];
       meetings = Array.isArray(response.meetings) ? response.meetings.map(normalizeMeeting) : [];
-      teamMembers = Array.isArray(response.members) ? response.members.filter(member => member.active !== false) : [];
+      teamMembers = Array.isArray(response.members) ? response.members.map(normalizeMember).filter(member => member.active) : [];
+      adminMembers = Array.isArray(response.allMembers) ? response.allMembers.map(normalizeMember) : [...teamMembers];
       projectCategories = Array.isArray(response.projectCategories) ? response.projectCategories.map(normalizeProjectCategory) : [];
+
       ensureCurrentUser();
-      writeCache();
       renderAll();
       const syncedAt = new Date();
-      setConnectionState('connected', 'Google Sheets 연결됨', `마지막 동기화 ${syncedAt.getHours()}:${String(syncedAt.getMinutes()).padStart(2, '0')}`);
+      setConnectionState('connected', `${authState.teamName || '현재 팀'} 연결됨`, `마지막 동기화 ${syncedAt.getHours()}:${String(syncedAt.getMinutes()).padStart(2, '0')}`);
     } catch (error) {
       console.error(error);
+      tasks = [];
+      comments = [];
+      meetings = [];
+      teamMembers = [];
+      adminMembers = [];
+      projectCategories = [];
+      companyTeams = [];
+      authState = { role: 'team', isAdmin: false, teamId: '', teamName: '' };
       setConnectionState('error', 'Google Sheets 연결 실패', error.message);
       renderAll();
       if (!silent) showToast(error.message);
@@ -637,25 +726,40 @@
       try {
         const response = await jsonpRequest('getData');
         assertApiVersion(response);
+
         const remoteTasks = Array.isArray(response.tasks) ? response.tasks.map(normalizeTask) : [];
         const remoteComments = Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [];
         const remoteMeetings = Array.isArray(response.meetings) ? response.meetings.map(normalizeMeeting) : [];
-        const remoteMembers = Array.isArray(response.members) ? response.members.filter(member => member.active !== false) : [];
+        const remoteMembers = Array.isArray(response.members) ? response.members.map(normalizeMember).filter(member => member.active) : [];
+        const remoteAdminMembers = Array.isArray(response.allMembers) ? response.allMembers.map(normalizeMember) : [...remoteMembers];
         const remoteProjectCategories = Array.isArray(response.projectCategories) ? response.projectCategories.map(normalizeProjectCategory) : [];
-        if (!mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers, remoteMeetings, remoteProjectCategories)) {
+        const remoteTeams = Array.isArray(response.teams) ? response.teams.map(normalizeTeam) : companyTeams;
+
+        if (!mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers, remoteMeetings, remoteProjectCategories, remoteTeams, remoteAdminMembers)) {
           lastError = new Error('저장 내용이 아직 Google Sheets에 반영되지 않았습니다.');
           continue;
         }
 
+        authState = {
+          role: String(response.auth?.role || authState.role || 'team'),
+          isAdmin: Boolean(response.auth?.isAdmin),
+          teamId: String(response.auth?.teamId || activeTeamId),
+          teamName: String(response.auth?.teamName || authState.teamName || '')
+        };
+        if (authState.teamId) {
+          activeTeamId = authState.teamId;
+          localStorage.setItem(ACTIVE_TEAM_KEY, activeTeamId);
+        }
         tasks = remoteTasks;
         comments = remoteComments;
         meetings = remoteMeetings;
         teamMembers = remoteMembers;
+        adminMembers = remoteAdminMembers;
         projectCategories = remoteProjectCategories;
+        companyTeams = remoteTeams;
         ensureCurrentUser();
-        writeCache();
         renderAll();
-        setConnectionState('connected', 'Google Sheets 연결됨', '방금 변경 사항을 저장했습니다.');
+        setConnectionState('connected', `${authState.teamName || '현재 팀'} 연결됨`, '방금 변경 사항을 저장했습니다.');
         showToast(successMessage);
         return;
       } catch (error) {
@@ -720,7 +824,9 @@
     renderTaskList();
     renderCalendar();
     renderMeetingList();
+    renderAdmin();
     updateProfile();
+    updateWorkspaceContext();
   }
 
   function populateFilters() {
@@ -839,6 +945,239 @@
     } catch (error) {
       console.error(error);
       setConnectionState('error', '카테고리 저장 확인 필요', error.message);
+      showToast(error.message);
+    }
+  }
+
+
+  function updateWorkspaceContext() {
+    if (els.currentTeamName) els.currentTeamName.textContent = authState.teamName || '팀 확인 중';
+
+    const adminMode = Boolean(authState.isAdmin);
+    els.adminNavItem?.classList.toggle('hidden', !adminMode);
+    els.adminTeamSelect?.classList.toggle('hidden', !adminMode);
+
+    if (adminMode && els.adminTeamSelect) {
+      const activeTeams = companyTeams.filter(team => team.active);
+      els.adminTeamSelect.innerHTML = activeTeams.map(team =>
+        `<option value="${escapeHTML(team.teamId)}">${escapeHTML(team.teamName)}</option>`).join('');
+      if (activeTeams.some(team => team.teamId === activeTeamId)) els.adminTeamSelect.value = activeTeamId;
+    }
+
+    if (els.adminMemberTeamName) els.adminMemberTeamName.textContent = authState.teamName || '현재 팀';
+    if (els.adminMemberTeamLabel && !els.adminMemberId?.value && !els.adminMemberTeamLabel.value) {
+      els.adminMemberTeamLabel.value = authState.teamName || '';
+    }
+  }
+
+  function generateTeamAccessCode() {
+    const bytes = new Uint8Array(12);
+    crypto.getRandomValues(bytes);
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const chars = [...bytes].map(value => alphabet[value % alphabet.length]).join('');
+    return `TF-${chars.slice(0, 4)}-${chars.slice(4, 8)}-${chars.slice(8, 12)}`;
+  }
+
+  function generateTeamId() {
+    const bytes = new Uint8Array(6);
+    crypto.getRandomValues(bytes);
+    const suffix = [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
+    return `team-${suffix}`;
+  }
+
+  function revealCredential(code) {
+    if (!els.credentialReveal || !els.credentialRevealCode) return;
+    els.credentialRevealCode.textContent = code;
+    els.credentialReveal.classList.remove('hidden');
+  }
+
+  function resetTeamAdminForm() {
+    if (!els.teamAdminForm) return;
+    els.teamAdminForm.reset();
+    els.adminTeamId.value = '';
+    els.adminTeamName.value = '';
+    els.saveTeamAdminBtn.textContent = '＋ 팀 추가';
+    els.cancelTeamEditBtn.classList.add('hidden');
+  }
+
+  function resetMemberAdminForm() {
+    if (!els.memberAdminForm) return;
+    els.memberAdminForm.reset();
+    els.adminMemberId.value = '';
+    els.adminMemberName.readOnly = false;
+    els.adminMemberName.value = '';
+    els.adminMemberPosition.value = '';
+    els.adminMemberTeamLabel.value = authState.teamName || '';
+    els.adminMemberSortOrder.value = Math.max(1, ...adminMembers.map(member => Number(member.sortOrder) || 0)) + 1;
+    els.adminMemberColor.value = DEFAULT_AVATAR_COLOR;
+    els.adminMemberActive.checked = true;
+    els.saveMemberAdminBtn.textContent = '＋ 팀원 추가';
+    els.cancelMemberEditBtn.classList.add('hidden');
+  }
+
+  function renderAdmin() {
+    if (!els.adminTeamList || !els.adminMemberList) return;
+    if (!authState.isAdmin) {
+      els.adminTeamList.innerHTML = '';
+      els.adminMemberList.innerHTML = '';
+      return;
+    }
+
+    const teams = [...companyTeams].sort((a, b) => a.sortOrder - b.sortOrder || a.teamName.localeCompare(b.teamName, 'ko'));
+    if (els.adminTeamCount) els.adminTeamCount.textContent = `${teams.length}개`;
+    els.adminTeamList.innerHTML = teams.map(team => `
+      <div class="admin-team-row ${team.teamId === activeTeamId ? 'current' : ''} ${team.active ? '' : 'inactive'}">
+        <div class="admin-team-copy">
+          <span class="admin-team-icon">${escapeHTML(team.teamName.slice(-2))}</span>
+          <div><strong>${escapeHTML(team.teamName)}</strong><small>${team.teamId === activeTeamId ? '현재 선택한 팀' : (team.active ? '사용 중' : '비활성')}</small></div>
+        </div>
+        <div class="admin-row-actions">
+          <button type="button" data-admin-select-team="${escapeHTML(team.teamId)}">열기</button>
+          <button type="button" data-admin-edit-team="${escapeHTML(team.teamId)}">이름 수정</button>
+          <button type="button" data-admin-reset-code="${escapeHTML(team.teamId)}">코드 재발급</button>
+        </div>
+      </div>`).join('') || '<div class="empty-state">등록된 팀이 없습니다.</div>';
+
+    const members = [...adminMembers].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'ko'));
+    if (els.adminMemberCount) els.adminMemberCount.textContent = `${members.filter(member => member.active).length}명 사용 중 · 전체 ${members.length}명`;
+    els.adminMemberList.innerHTML = members.map(member => `
+      <div class="admin-member-row ${member.active ? '' : 'inactive'}">
+        ${avatarMarkup(member.name, 'admin-member-avatar')}
+        <div class="admin-member-copy">
+          <strong>${escapeHTML(member.name)} <span>${escapeHTML(member.position || '')}</span></strong>
+          <small>${escapeHTML(member.team || authState.teamName || '')} · 순서 ${member.sortOrder}${member.active ? '' : ' · 비활성'}</small>
+        </div>
+        <div class="admin-row-actions">
+          <button type="button" data-admin-edit-member="${escapeHTML(member.id)}">수정</button>
+          <button type="button" class="${member.active ? 'danger-text' : ''}" data-admin-toggle-member="${escapeHTML(member.id)}">${member.active ? '비활성' : '다시 사용'}</button>
+        </div>
+      </div>`).join('') || '<div class="empty-state">이 팀에 등록된 팀원이 없습니다.</div>';
+  }
+
+  async function submitTeamAdmin(event) {
+    event.preventDefault();
+    if (!authState.isAdmin) return showToast('관리자 권한이 필요합니다.');
+    const editingId = els.adminTeamId.value.trim();
+    const teamName = els.adminTeamName.value.trim().replace(/\s+/g, ' ');
+    if (!teamName) return showToast('팀 이름을 입력하세요.');
+
+    const existing = companyTeams.find(team => team.teamId === editingId);
+    const accessCode = existing ? '' : generateTeamAccessCode();
+    const payload = {
+      teamId: existing?.teamId || generateTeamId(teamName),
+      teamName,
+      active: existing ? existing.active : true,
+      sortOrder: existing?.sortOrder || Math.max(0, ...companyTeams.map(team => Number(team.sortOrder) || 0)) + 1,
+      codeVersion: existing?.codeVersion || String(Date.now()),
+      ...(accessCode ? { accessCode, codeVersion: String(Date.now()) } : {})
+    };
+
+    els.saveTeamAdminBtn.disabled = true;
+    try {
+      await mutateAndRefresh('saveTeam', payload, existing ? '팀 이름을 수정했습니다.' : '새 팀을 추가했습니다.');
+      if (accessCode) revealCredential(accessCode);
+      resetTeamAdminForm();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message);
+    } finally {
+      els.saveTeamAdminBtn.disabled = false;
+    }
+  }
+
+  async function resetTeamAccessCode(teamId) {
+    if (!authState.isAdmin) return;
+    const team = companyTeams.find(item => item.teamId === teamId);
+    if (!team || !confirm(`${team.teamName}의 접속코드를 재발급할까요?\n기존 코드는 즉시 사용할 수 없게 됩니다.`)) return;
+    const accessCode = generateTeamAccessCode();
+    const payload = {
+      ...team,
+      accessCode,
+      codeVersion: String(Date.now())
+    };
+    try {
+      await mutateAndRefresh('saveTeam', payload, `${team.teamName} 접속코드를 재발급했습니다.`);
+      revealCredential(accessCode);
+    } catch (error) {
+      console.error(error);
+      showToast(error.message);
+    }
+  }
+
+  async function selectAdminTeam(teamId) {
+    if (!authState.isAdmin || !teamId || teamId === activeTeamId) return;
+    activeTeamId = teamId;
+    localStorage.setItem(ACTIVE_TEAM_KEY, teamId);
+    currentUser = '';
+    meetingVisibleCount = 30;
+    resetMemberAdminForm();
+    await loadRemoteData();
+    if (activeView !== 'admin') renderAll();
+  }
+
+  function editAdminTeam(teamId) {
+    const team = companyTeams.find(item => item.teamId === teamId);
+    if (!team) return;
+    els.adminTeamId.value = team.teamId;
+    els.adminTeamName.value = team.teamName;
+    els.saveTeamAdminBtn.textContent = '팀 이름 저장';
+    els.cancelTeamEditBtn.classList.remove('hidden');
+    els.adminTeamName.focus();
+  }
+
+  function editAdminMember(memberId) {
+    const member = adminMembers.find(item => item.id === memberId);
+    if (!member) return;
+    els.adminMemberId.value = member.id;
+    els.adminMemberName.value = member.name;
+    els.adminMemberName.readOnly = true;
+    els.adminMemberPosition.value = member.position;
+    els.adminMemberTeamLabel.value = member.team || authState.teamName || '';
+    els.adminMemberSortOrder.value = member.sortOrder;
+    els.adminMemberColor.value = normalizeColor(member.avatarColor, member.name);
+    els.adminMemberActive.checked = member.active;
+    els.saveMemberAdminBtn.textContent = '팀원 정보 저장';
+    els.cancelMemberEditBtn.classList.remove('hidden');
+    els.adminMemberName.focus();
+  }
+
+  async function submitMemberAdmin(event) {
+    event.preventDefault();
+    if (!authState.isAdmin) return showToast('관리자 권한이 필요합니다.');
+    const id = els.adminMemberId.value.trim();
+    const name = els.adminMemberName.value.trim().replace(/\s+/g, ' ');
+    if (!name) return showToast('팀원 이름을 입력하세요.');
+    const payload = {
+      id: id || `MB${Date.now()}${Math.random().toString(16).slice(2, 8)}`,
+      teamId: activeTeamId,
+      name,
+      position: els.adminMemberPosition.value.trim(),
+      team: els.adminMemberTeamLabel.value.trim() || authState.teamName,
+      sortOrder: Math.max(1, Number(els.adminMemberSortOrder.value) || 999),
+      avatarColor: normalizeColor(els.adminMemberColor.value, name),
+      active: els.adminMemberActive.checked
+    };
+    els.saveMemberAdminBtn.disabled = true;
+    try {
+      await mutateAndRefresh('saveMemberAdmin', payload, id ? '팀원 정보를 수정했습니다.' : '새 팀원을 추가했습니다.');
+      resetMemberAdminForm();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message);
+    } finally {
+      els.saveMemberAdminBtn.disabled = false;
+    }
+  }
+
+  async function toggleAdminMember(memberId) {
+    const member = adminMembers.find(item => item.id === memberId);
+    if (!member) return;
+    if (member.active && !confirm(`${member.name} 팀원을 비활성화할까요?\n과거 업무와 회의록 기록은 유지됩니다.`)) return;
+    const payload = { ...member, active: !member.active, teamId: activeTeamId };
+    try {
+      await mutateAndRefresh('saveMemberAdmin', payload, payload.active ? '팀원을 다시 사용하도록 변경했습니다.' : '팀원을 비활성화했습니다.');
+    } catch (error) {
+      console.error(error);
       showToast(error.message);
     }
   }
@@ -1101,7 +1440,8 @@
       return;
     }
 
-    els.meetingList.innerHTML = filtered.map(meeting => {
+    const visibleMeetings = filtered.slice(0, meetingVisibleCount);
+    els.meetingList.innerHTML = visibleMeetings.map(meeting => {
       const expanded = expandedMeetingIds.has(meeting.id);
       const stats = meetingActionStats(meeting);
       const time = meetingTimeLabel(meeting);
@@ -1134,6 +1474,9 @@
         ${detail}
       </article>`;
     }).join('');
+    if (filtered.length > visibleMeetings.length) {
+      els.meetingList.insertAdjacentHTML('beforeend', `<button type="button" class="meeting-load-more" data-load-more-meetings>이전 회의록 더 보기 <span>${filtered.length - visibleMeetings.length}개 남음</span></button>`);
+    }
   }
 
   function renderMeetingAttendeePicker(selected = null) {
@@ -1268,10 +1611,12 @@
   }
 
   function switchView(view) {
+    if (view === 'admin' && !authState.isAdmin) return;
     activeView = view;
     activeMineOnly = view === 'mine';
     $$('.nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === view));
     $$('.view').forEach(viewElement => viewElement.classList.remove('active'));
+
     if (view === 'dashboard') {
       $('#dashboardView').classList.add('active');
       els.pageTitle.textContent = '업무 대시보드';
@@ -1281,14 +1626,23 @@
     } else if (view === 'meetings') {
       $('#meetingView').classList.add('active');
       els.pageTitle.textContent = '회의록';
+    } else if (view === 'admin') {
+      $('#adminView').classList.add('active');
+      els.pageTitle.textContent = 'TEAM FLOW 관리';
     } else {
       $('#taskListView').classList.add('active');
       els.pageTitle.textContent = activeMineOnly ? '내 업무' : '전체 업무';
     }
+
     const meetingMode = view === 'meetings';
-    els.taskFilterRow.classList.toggle('hidden', meetingMode);
-    els.openTaskModalBtn.textContent = meetingMode ? '＋ 새 회의록' : '＋ 새 업무';
-    els.globalSearch.placeholder = meetingMode ? '회의 제목, 참석자 검색' : '업무명, 담당자 검색';
+    const adminMode = view === 'admin';
+    els.taskFilterRow.classList.toggle('hidden', meetingMode || adminMode);
+    els.openTaskModalBtn.classList.toggle('hidden', adminMode);
+    els.globalSearch.closest('.search-box')?.classList.toggle('hidden', adminMode);
+    if (!adminMode) {
+      els.openTaskModalBtn.textContent = meetingMode ? '＋ 새 회의록' : '＋ 새 업무';
+      els.globalSearch.placeholder = meetingMode ? '회의 제목, 참석자, 내용 검색' : '업무명, 담당자 검색';
+    }
     els.sidebar.classList.remove('open');
     renderAll();
   }
@@ -1563,7 +1917,10 @@
       }
     });
     [els.assigneeFilter, els.statusFilter].forEach(element => element.addEventListener('change', renderAll));
-    els.globalSearch.addEventListener('input', renderAll);
+    els.globalSearch.addEventListener('input', () => {
+      if (activeView === 'meetings') meetingVisibleCount = 30;
+      renderAll();
+    });
     $$('#periodSegment button').forEach(button => button.addEventListener('click', () => {
       period = button.dataset.period;
       $$('#periodSegment button').forEach(item => item.classList.toggle('active', item === button));
@@ -1594,6 +1951,38 @@
       textarea.closest('form')?.requestSubmit();
     });
     document.addEventListener('click', event => {
+      const loadMoreMeetings = event.target.closest('[data-load-more-meetings]');
+      if (loadMoreMeetings) {
+        meetingVisibleCount += 30;
+        renderMeetingList();
+        return;
+      }
+      const adminSelectTeam = event.target.closest('[data-admin-select-team]');
+      if (adminSelectTeam) {
+        selectAdminTeam(adminSelectTeam.dataset.adminSelectTeam);
+        return;
+      }
+      const adminEditTeam = event.target.closest('[data-admin-edit-team]');
+      if (adminEditTeam) {
+        editAdminTeam(adminEditTeam.dataset.adminEditTeam);
+        return;
+      }
+      const adminResetCode = event.target.closest('[data-admin-reset-code]');
+      if (adminResetCode) {
+        resetTeamAccessCode(adminResetCode.dataset.adminResetCode);
+        return;
+      }
+      const adminEditMember = event.target.closest('[data-admin-edit-member]');
+      if (adminEditMember) {
+        editAdminMember(adminEditMember.dataset.adminEditMember);
+        return;
+      }
+      const adminToggleMember = event.target.closest('[data-admin-toggle-member]');
+      if (adminToggleMember) {
+        toggleAdminMember(adminToggleMember.dataset.adminToggleMember);
+        return;
+      }
+
       const avatarSwatch = event.target.closest('[data-avatar-color]');
       if (avatarSwatch) {
         event.preventDefault();
@@ -1686,13 +2075,32 @@
     els.openAvatarPickerBtn?.addEventListener('click', () => els.avatarPicker?.classList.toggle('open'));
     els.changeAccessKeyBtn.addEventListener('click', () => {
       const current = localStorage.getItem(TOKEN_KEY) || '';
-      const next = window.prompt('새 팀 접속키를 입력하세요.', current) || '';
+      const next = window.prompt('새 팀 접속코드 또는 관리자 접속키를 입력하세요.', current) || '';
       if (!next.trim()) return;
       localStorage.setItem(TOKEN_KEY, next.trim());
+      activeTeamId = '';
+      localStorage.removeItem(ACTIVE_TEAM_KEY);
+      currentUser = '';
+      meetingVisibleCount = 30;
       loadRemoteData();
     });
     $$('[data-open-project-categories]').forEach(button => button.addEventListener('click', openProjectCategoryModal));
     els.projectCategoryForm?.addEventListener('submit', submitProjectCategory);
+    els.teamAdminForm?.addEventListener('submit', submitTeamAdmin);
+    els.memberAdminForm?.addEventListener('submit', submitMemberAdmin);
+    els.cancelTeamEditBtn?.addEventListener('click', resetTeamAdminForm);
+    els.cancelMemberEditBtn?.addEventListener('click', resetMemberAdminForm);
+    els.adminTeamSelect?.addEventListener('change', () => selectAdminTeam(els.adminTeamSelect.value));
+    els.copyCredentialBtn?.addEventListener('click', async () => {
+      const code = els.credentialRevealCode?.textContent || '';
+      if (!code) return;
+      try {
+        await navigator.clipboard.writeText(code);
+        showToast('접속코드를 복사했습니다.');
+      } catch (error) {
+        window.prompt('아래 접속코드를 복사하세요.', code);
+      }
+    });
     els.closeProjectCategoryModalBtn?.addEventListener('click', closeProjectCategoryModal);
     els.doneProjectCategoryBtn?.addEventListener('click', closeProjectCategoryModal);
     els.projectCategoryModal?.addEventListener('click', event => {

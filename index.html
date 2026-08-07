@@ -34,9 +34,17 @@
         <button class="nav-item" data-view="meetings">
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4.5h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z"/><path d="M7.5 8.5h9M7.5 12h6"/></svg></span><span>회의록</span>
         </button>
+        <button class="nav-item hidden" id="adminNavItem" data-view="admin">
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c.8-3.8 3-5.8 7-5.8s6.2 2 7 5.8"/><path d="M18.5 4.5v4M16.5 6.5h4"/></svg></span><span>관리</span>
+        </button>
       </nav>
 
       <div class="sidebar-footer">
+        <div class="workspace-context">
+          <span>현재 팀</span>
+          <strong id="currentTeamName">팀 확인 중</strong>
+          <select class="sidebar-select hidden" id="adminTeamSelect" aria-label="관리할 팀 선택"></select>
+        </div>
         <div class="profile-mini">
           <div class="avatar" id="profileAvatar">나</div>
           <div>
@@ -227,6 +235,89 @@
           </div>
           <div id="meetingList" class="meeting-list"></div>
         </article>
+      </section>
+
+      <section id="adminView" class="view">
+        <div class="admin-page-grid">
+          <article class="panel admin-panel">
+            <div class="panel-header wrap-header">
+              <div>
+                <span class="section-kicker">COMPANY</span>
+                <h2>팀 관리</h2>
+                <p class="panel-description">팀별 접속코드와 업무 공간을 분리합니다.</p>
+              </div>
+            </div>
+
+            <form id="teamAdminForm" class="admin-inline-form">
+              <input type="hidden" id="adminTeamId" />
+              <label>
+                <span>팀 이름</span>
+                <input id="adminTeamName" maxlength="50" required placeholder="예: 국내영업팀" />
+              </label>
+              <div class="admin-form-actions">
+                <button type="button" class="secondary-button hidden" id="cancelTeamEditBtn">취소</button>
+                <button type="submit" class="primary-button" id="saveTeamAdminBtn">＋ 팀 추가</button>
+              </div>
+            </form>
+
+            <div class="credential-reveal hidden" id="credentialReveal">
+              <div>
+                <span>새 팀 접속코드</span>
+                <strong id="credentialRevealCode"></strong>
+                <small>이 코드는 생성 직후에만 표시됩니다. 해당 팀에 별도로 전달하세요.</small>
+              </div>
+              <button type="button" class="secondary-button" id="copyCredentialBtn">복사</button>
+            </div>
+
+            <div class="admin-list-head"><strong>등록된 팀</strong><span id="adminTeamCount"></span></div>
+            <div class="admin-team-list" id="adminTeamList"></div>
+          </article>
+
+          <article class="panel admin-panel">
+            <div class="panel-header wrap-header">
+              <div>
+                <span class="section-kicker">MEMBERS</span>
+                <h2>팀원 관리</h2>
+                <p class="panel-description"><strong id="adminMemberTeamName">현재 팀</strong>의 팀원을 페이지에서 추가·수정할 수 있습니다.</p>
+              </div>
+            </div>
+
+            <form id="memberAdminForm" class="member-admin-form">
+              <input type="hidden" id="adminMemberId" />
+              <label>
+                <span>이름 *</span>
+                <input id="adminMemberName" maxlength="50" required placeholder="예: 홍길동" />
+              </label>
+              <label>
+                <span>직급</span>
+                <input id="adminMemberPosition" maxlength="30" placeholder="예: 프로 / 팀장" />
+              </label>
+              <label>
+                <span>소속 표시</span>
+                <input id="adminMemberTeamLabel" maxlength="50" placeholder="예: 국내영업팀" />
+              </label>
+              <label>
+                <span>표시 순서</span>
+                <input id="adminMemberSortOrder" type="number" min="1" max="999" value="1" />
+              </label>
+              <label class="member-color-field">
+                <span>아이콘 색상</span>
+                <input id="adminMemberColor" type="color" value="#2f6bff" />
+              </label>
+              <label class="admin-checkbox-field">
+                <input id="adminMemberActive" type="checkbox" checked />
+                <span>사용 중</span>
+              </label>
+              <div class="admin-form-actions full-field">
+                <button type="button" class="secondary-button hidden" id="cancelMemberEditBtn">취소</button>
+                <button type="submit" class="primary-button" id="saveMemberAdminBtn">＋ 팀원 추가</button>
+              </div>
+            </form>
+
+            <div class="admin-list-head"><strong>팀원</strong><span id="adminMemberCount"></span></div>
+            <div class="admin-member-list" id="adminMemberList"></div>
+          </article>
+        </div>
       </section>
     </main>
   </div>
