@@ -2,7 +2,7 @@
   'use strict';
 
   const CONFIG = window.TEAM_FLOW_CONFIG || {};
-  const CACHE_KEY = 'teamFlowRemoteCacheV4';
+  const CACHE_KEY = 'teamFlowRemoteCacheV5';
   const USER_KEY = 'teamFlowCurrentUserV2';
   const TOKEN_KEY = 'teamFlowAccessTokenV2';
   const STATUS = {
@@ -13,7 +13,7 @@
     delayed: { label: '지연', color: '#e14a55' }
   };
   const PRIORITY = { low: '낮음', normal: '보통', high: '높음', urgent: '긴급' };
-  const REQUIRED_API_VERSION = '1.6.0';
+  const REQUIRED_API_VERSION = '1.7.0';
   const DEFAULT_AVATAR_COLOR = '#2f6bff';
   const AVATAR_PALETTE = ['#2f6bff', '#5b8def', '#7c5cff', '#ff5c7c', '#ef6c00', '#16a34a', '#10b981', '#0ea5e9', '#8b5cf6', '#ec4899', '#f59e0b', '#6b7280'];
 
@@ -60,7 +60,6 @@
     deleteTaskBtn: $('#deleteTaskBtn'),
     saveTaskBtn: $('#saveTaskBtn'),
     toast: $('#toast'),
-    projectOptions: $('#projectOptions'),
     currentUserSelect: $('#currentUserSelect'),
     profileName: $('#profileName'),
     profileTeam: $('#profileTeam'),
@@ -95,13 +94,21 @@
     addMeetingActionBtn: $('#addMeetingActionBtn'),
     meetingModalTitle: $('#meetingModalTitle'),
     deleteMeetingBtn: $('#deleteMeetingBtn'),
-    saveMeetingBtn: $('#saveMeetingBtn')
+    saveMeetingBtn: $('#saveMeetingBtn'),
+    projectCategoryModal: $('#projectCategoryModal'),
+    projectCategoryForm: $('#projectCategoryForm'),
+    projectCategoryName: $('#projectCategoryName'),
+    projectCategoryList: $('#projectCategoryList'),
+    addProjectCategoryBtn: $('#addProjectCategoryBtn'),
+    closeProjectCategoryModalBtn: $('#closeProjectCategoryModalBtn'),
+    doneProjectCategoryBtn: $('#doneProjectCategoryBtn')
   };
 
   let tasks = [];
   let comments = [];
   let meetings = [];
   let teamMembers = [];
+  let projectCategories = [];
   let currentUser = localStorage.getItem(USER_KEY) || '';
   let activeView = 'dashboard';
   let taskLayout = 'list';
@@ -157,10 +164,10 @@
   function sampleTasks() {
     const monday = startOfWeek(new Date());
     return [
-      makeTask('ERS 부스 그래픽 최종 전달', 'ERS 2026', '김마케팅', addDays(monday, -1), addDays(monday, 1), 'progress', 'urgent', 70, 'Google Sheets 연결 전 화면 확인용 샘플 업무입니다.'),
-      makeTask('OmniOx750U 영상 스토리보드 검토', 'OmniOx750U 영상', '이콘텐츠', monday, addDays(monday, 3), 'progress', 'high', 45, ''),
-      makeTask('MV50 카탈로그 사양표 업데이트', 'MV50 카탈로그', '김마케팅', addDays(monday, 2), addDays(monday, 4), 'before', 'high', 15, ''),
-      makeTask('웹사이트 Bi-Flow 페이지 수정', '웹사이트 개편', '박디자인', addDays(monday, 1), addDays(monday, 5), 'before', 'normal', 10, '')
+      makeTask('ERS 부스 그래픽 최종 전달', '전시회/학회', '김마케팅', addDays(monday, -1), addDays(monday, 1), 'progress', 'urgent', 70, 'Google Sheets 연결 전 화면 확인용 샘플 업무입니다.'),
+      makeTask('OmniOx750U 영상 스토리보드 검토', '영상/콘텐츠', '이콘텐츠', monday, addDays(monday, 3), 'progress', 'high', 45, ''),
+      makeTask('MV50 카탈로그 사양표 업데이트', 'Material', '김마케팅', addDays(monday, 2), addDays(monday, 4), 'before', 'high', 15, ''),
+      makeTask('웹사이트 Bi-Flow 페이지 수정', '웹사이트', '박디자인', addDays(monday, 1), addDays(monday, 5), 'before', 'normal', 10, '')
     ];
   }
 
@@ -212,6 +219,17 @@
       author: String(comment.author || ''),
       content: String(comment.content || '').slice(0, 1000),
       createdAt: String(comment.createdAt || '')
+    };
+  }
+
+  function normalizeProjectCategory(category = {}) {
+    return {
+      id: String(category.id || ''),
+      name: String(category.name || '').trim().slice(0, 50),
+      active: category.active === true || String(category.active).toLowerCase() === 'true',
+      sortOrder: Number(category.sortOrder) || 999,
+      createdAt: String(category.createdAt || ''),
+      updatedAt: String(category.updatedAt || '')
     };
   }
 
@@ -289,6 +307,7 @@
         comments = Array.isArray(cached.comments) ? cached.comments.map(normalizeComment) : [];
         meetings = Array.isArray(cached.meetings) ? cached.meetings.map(normalizeMeeting) : [];
         teamMembers = Array.isArray(cached.members) ? cached.members : [];
+        projectCategories = Array.isArray(cached.projectCategories) ? cached.projectCategories.map(normalizeProjectCategory) : [];
         return true;
       }
     } catch (error) {
@@ -297,6 +316,7 @@
     tasks = sampleTasks();
     comments = [];
     meetings = [];
+    projectCategories = ['전시회/학회', 'Material', '영상/콘텐츠', '웹사이트', '제품/브랜딩', '영업지원', '정부지원사업', '기타'].map((name, index) => normalizeProjectCategory({ id: `PC${index + 1}`, name, active: true, sortOrder: index + 1 }));
     teamMembers = [
       { name: '김마케팅', position: '프로', team: '마케팅팀', active: true },
       { name: '박디자인', position: '프로', team: '마케팅팀', active: true },
@@ -306,7 +326,7 @@
   }
 
   function writeCache() {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ tasks, comments, meetings, members: teamMembers, savedAt: new Date().toISOString() }));
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ tasks, comments, meetings, members: teamMembers, projectCategories, savedAt: new Date().toISOString() }));
   }
 
   function escapeHTML(value = '') {
@@ -460,7 +480,7 @@
     })));
   }
 
-  function mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers = [], remoteMeetings = []) {
+  function mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers = [], remoteMeetings = [], remoteProjectCategories = []) {
     if (action === 'deleteTask') {
       return !remoteTasks.some(task => task.id === payload.id)
         && !remoteComments.some(comment => comment.taskId === payload.id);
@@ -473,6 +493,12 @@
     if (action === 'saveMemberProfile') {
       const savedMember = remoteMembers.find(member => member.name === payload.name);
       return Boolean(savedMember && normalizeColor(savedMember.avatarColor, savedMember.name) === normalizeColor(payload.avatarColor, payload.name));
+    }
+    if (action === 'saveProjectCategory') {
+      const savedCategory = remoteProjectCategories.find(category => category.id === payload.id);
+      return Boolean(savedCategory
+        && savedCategory.name === payload.name
+        && Boolean(savedCategory.active) === Boolean(payload.active));
     }
     if (action === 'deleteMeeting') return !remoteMeetings.some(meeting => meeting.id === payload.id);
     if (action === 'saveMeeting') {
@@ -581,6 +607,7 @@
       comments = Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [];
       meetings = Array.isArray(response.meetings) ? response.meetings.map(normalizeMeeting) : [];
       teamMembers = Array.isArray(response.members) ? response.members.filter(member => member.active !== false) : [];
+      projectCategories = Array.isArray(response.projectCategories) ? response.projectCategories.map(normalizeProjectCategory) : [];
       ensureCurrentUser();
       writeCache();
       renderAll();
@@ -614,7 +641,8 @@
         const remoteComments = Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [];
         const remoteMeetings = Array.isArray(response.meetings) ? response.meetings.map(normalizeMeeting) : [];
         const remoteMembers = Array.isArray(response.members) ? response.members.filter(member => member.active !== false) : [];
-        if (!mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers, remoteMeetings)) {
+        const remoteProjectCategories = Array.isArray(response.projectCategories) ? response.projectCategories.map(normalizeProjectCategory) : [];
+        if (!mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers, remoteMeetings, remoteProjectCategories)) {
           lastError = new Error('저장 내용이 아직 Google Sheets에 반영되지 않았습니다.');
           continue;
         }
@@ -623,6 +651,7 @@
         comments = remoteComments;
         meetings = remoteMeetings;
         teamMembers = remoteMembers;
+        projectCategories = remoteProjectCategories;
         ensureCurrentUser();
         writeCache();
         renderAll();
@@ -714,8 +743,104 @@
     }
     renderMeetingAttendeePicker();
 
-    const projects = [...new Set(tasks.map(task => task.project).filter(Boolean))].sort();
-    els.projectOptions.innerHTML = projects.map(project => `<option value="${escapeHTML(project)}"></option>`).join('');
+    populateProjectSelectors();
+  }
+
+  function activeProjectCategories() {
+    return projectCategories
+      .filter(category => category.active)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'ko'));
+  }
+
+  function projectSelectOptions({ includeBlank = false, selectedValue = '' } = {}) {
+    const categories = activeProjectCategories();
+    const selected = String(selectedValue || '').trim();
+    const names = categories.map(category => category.name);
+    if (selected && !names.includes(selected)) names.push(selected);
+    return `${includeBlank ? '<option value="">선택 안 함</option>' : '<option value="" disabled>카테고리 선택</option>'}`
+      + names.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
+  }
+
+  function populateProjectSelectors({ taskValue, meetingValue } = {}) {
+    const taskSelected = taskValue !== undefined ? String(taskValue || '') : els.taskProject.value;
+    const meetingSelected = meetingValue !== undefined ? String(meetingValue || '') : els.meetingProject.value;
+    els.taskProject.innerHTML = projectSelectOptions({ selectedValue: taskSelected });
+    els.meetingProject.innerHTML = projectSelectOptions({ includeBlank: true, selectedValue: meetingSelected });
+    if (taskSelected) els.taskProject.value = taskSelected;
+    else if (activeProjectCategories()[0]) els.taskProject.value = activeProjectCategories()[0].name;
+    if (meetingSelected) els.meetingProject.value = meetingSelected;
+  }
+
+  function renderProjectCategoryList() {
+    if (!els.projectCategoryList) return;
+    const sorted = [...projectCategories].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'ko'));
+    els.projectCategoryList.innerHTML = sorted.length ? sorted.map(category => `
+      <div class="project-category-row ${category.active ? '' : 'inactive'}">
+        <div class="project-category-copy">
+          <span class="project-category-dot"></span>
+          <strong>${escapeHTML(category.name)}</strong>
+          <small>${category.active ? '사용 중' : '숨김'}</small>
+        </div>
+        <button type="button" class="category-state-button ${category.active ? '' : 'restore'}"
+          data-toggle-project-category="${escapeHTML(category.id)}">${category.active ? '숨기기' : '다시 사용'}</button>
+      </div>`).join('') : '<div class="category-empty">등록된 카테고리가 없습니다.</div>';
+  }
+
+  function openProjectCategoryModal() {
+    renderProjectCategoryList();
+    els.projectCategoryName.value = '';
+    els.projectCategoryModal.classList.add('open');
+    els.projectCategoryModal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => els.projectCategoryName.focus(), 80);
+  }
+
+  function closeProjectCategoryModal() {
+    els.projectCategoryModal.classList.remove('open');
+    els.projectCategoryModal.setAttribute('aria-hidden', 'true');
+  }
+
+  async function submitProjectCategory(event) {
+    event.preventDefault();
+    const name = els.projectCategoryName.value.trim().replace(/\s+/g, ' ');
+    if (!name) return showToast('카테고리명을 입력하세요.');
+    if (projectCategories.some(category => category.name.toLowerCase() === name.toLowerCase())) return showToast('이미 등록된 카테고리입니다.');
+    const payload = {
+      id: `PC${Date.now()}${Math.random().toString(16).slice(2, 8)}`,
+      name,
+      active: true,
+      sortOrder: Math.max(0, ...projectCategories.map(category => Number(category.sortOrder) || 0)) + 1
+    };
+    els.addProjectCategoryBtn.disabled = true;
+    try {
+      await mutateAndRefresh('saveProjectCategory', payload, '프로젝트 카테고리를 추가했습니다.');
+      els.projectCategoryName.value = '';
+      renderProjectCategoryList();
+      populateProjectSelectors();
+      els.projectCategoryName.focus();
+    } catch (error) {
+      console.error(error);
+      setConnectionState('error', '카테고리 저장 확인 필요', error.message);
+      showToast(error.message);
+    } finally {
+      els.addProjectCategoryBtn.disabled = false;
+    }
+  }
+
+  async function toggleProjectCategory(categoryId) {
+    const category = projectCategories.find(item => item.id === categoryId);
+    if (!category) return;
+    const activeCount = activeProjectCategories().length;
+    if (category.active && activeCount <= 1) return showToast('최소 한 개의 프로젝트 카테고리는 사용 중이어야 합니다.');
+    const payload = { ...category, active: !category.active };
+    try {
+      await mutateAndRefresh('saveProjectCategory', payload, payload.active ? '카테고리를 다시 사용합니다.' : '카테고리를 숨겼습니다.');
+      renderProjectCategoryList();
+      populateProjectSelectors();
+    } catch (error) {
+      console.error(error);
+      setConnectionState('error', '카테고리 저장 확인 필요', error.message);
+      showToast(error.message);
+    }
   }
 
   function renderDashboard() {
@@ -1050,7 +1175,9 @@
     els.meetingStartTime.value = meeting?.startTime || '';
     els.meetingEndTime.value = meeting?.endTime || '';
     els.meetingLocation.value = meeting?.location || '';
-    els.meetingProject.value = meeting?.project || '';
+    const selectedMeetingProject = meeting?.project || '';
+    populateProjectSelectors({ meetingValue: selectedMeetingProject });
+    els.meetingProject.value = selectedMeetingProject;
     els.meetingRecorder.value = meeting?.recorder || currentUser || memberNames()[0] || '';
     els.meetingAgenda.value = meeting?.agenda || '';
     els.meetingDiscussion.value = meeting?.discussion || '';
@@ -1170,7 +1297,9 @@
     els.taskForm.reset();
     els.taskId.value = task?.id || '';
     els.taskTitle.value = task?.title || '';
-    els.taskProject.value = task?.project || '';
+    const selectedProject = task?.project || activeProjectCategories()[0]?.name || '';
+    populateProjectSelectors({ taskValue: selectedProject });
+    els.taskProject.value = selectedProject;
     els.taskAssignee.value = task?.assignee || currentUser;
     els.taskStart.value = task?.start || iso(new Date());
     els.taskEnd.value = task?.end || iso(addDays(new Date(), 1));
@@ -1562,7 +1691,20 @@
       localStorage.setItem(TOKEN_KEY, next.trim());
       loadRemoteData();
     });
-    document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeTaskModal(); closeMeetingModal(); } });
+    $$('[data-open-project-categories]').forEach(button => button.addEventListener('click', openProjectCategoryModal));
+    els.projectCategoryForm?.addEventListener('submit', submitProjectCategory);
+    els.closeProjectCategoryModalBtn?.addEventListener('click', closeProjectCategoryModal);
+    els.doneProjectCategoryBtn?.addEventListener('click', closeProjectCategoryModal);
+    els.projectCategoryModal?.addEventListener('click', event => {
+      if (event.target === els.projectCategoryModal) closeProjectCategoryModal();
+      const toggleButton = event.target.closest('[data-toggle-project-category]');
+      if (toggleButton) toggleProjectCategory(toggleButton.dataset.toggleProjectCategory);
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      if (els.projectCategoryModal?.classList.contains('open')) closeProjectCategoryModal();
+      else { closeTaskModal(); closeMeetingModal(); }
+    });
   }
 
   async function init() {

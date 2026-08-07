@@ -248,11 +248,13 @@
             <span>업무명 *</span>
             <input id="taskTitle" required maxlength="80" placeholder="예: ERS 부스 그래픽 최종 전달" />
           </label>
-          <label>
-            <span>프로젝트 *</span>
-            <input id="taskProject" required list="projectOptions" placeholder="예: ERS 2026" />
-            <datalist id="projectOptions"></datalist>
-          </label>
+          <div class="project-select-field">
+            <div class="field-label-row">
+              <label for="taskProject">프로젝트 *</label>
+              <button type="button" class="field-manage-button" data-open-project-categories>카테고리 관리</button>
+            </div>
+            <select id="taskProject" required></select>
+          </div>
           <label>
             <span>담당자 *</span>
             <select id="taskAssignee" required></select>
@@ -358,10 +360,13 @@
             <span>장소·방식</span>
             <input id="meetingLocation" maxlength="80" placeholder="예: 2층 회의실 / Google Meet" />
           </label>
-          <label>
-            <span>관련 프로젝트</span>
-            <input id="meetingProject" list="projectOptions" maxlength="80" placeholder="예: 수출바우처 동영상 제작" />
-          </label>
+          <div class="project-select-field">
+            <div class="field-label-row">
+              <label for="meetingProject">관련 프로젝트</label>
+              <button type="button" class="field-manage-button" data-open-project-categories>카테고리 관리</button>
+            </div>
+            <select id="meetingProject"></select>
+          </div>
           <label>
             <span>작성자 *</span>
             <select id="meetingRecorder" required></select>
@@ -400,6 +405,38 @@
           <button type="submit" class="primary-button" id="saveMeetingBtn">저장</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="projectCategoryModal" aria-hidden="true">
+    <div class="modal category-modal" role="dialog" aria-modal="true" aria-labelledby="projectCategoryModalTitle">
+      <div class="modal-header">
+        <div>
+          <span class="section-kicker">CATEGORY</span>
+          <h2 id="projectCategoryModalTitle">프로젝트 카테고리 관리</h2>
+        </div>
+        <button class="icon-button" id="closeProjectCategoryModalBtn" aria-label="닫기">×</button>
+      </div>
+
+      <form id="projectCategoryForm" class="category-add-form">
+        <label for="projectCategoryName">새 카테고리</label>
+        <div class="category-add-row">
+          <input id="projectCategoryName" maxlength="50" required placeholder="예: 광고·캠페인" autocomplete="off" />
+          <button type="submit" class="primary-button" id="addProjectCategoryBtn">추가</button>
+        </div>
+      </form>
+
+      <div class="category-list-head">
+        <strong>등록된 카테고리</strong>
+        <span>사용하지 않는 항목은 숨길 수 있습니다.</span>
+      </div>
+      <div id="projectCategoryList" class="project-category-list"></div>
+      <p class="category-help">기존 업무에 사용된 카테고리를 숨겨도 과거 기록은 유지됩니다. 새 업무 등록 목록에서만 제외됩니다.</p>
+
+      <div class="modal-actions">
+        <div class="action-spacer"></div>
+        <button type="button" class="secondary-button" id="doneProjectCategoryBtn">완료</button>
+      </div>
     </div>
   </div>
 
