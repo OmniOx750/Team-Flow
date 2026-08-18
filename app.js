@@ -14,7 +14,7 @@
     delayed: { label: '지연', color: '#e14a55' }
   };
   const PRIORITY = { low: '낮음', normal: '보통', high: '높음', urgent: '긴급' };
-  const REQUIRED_API_VERSION = '2.1.0';
+  const REQUIRED_API_VERSION = '2.2.0';
   const DEFAULT_AVATAR_COLOR = '#2f6bff';
   const AVATAR_PALETTE = ['#2f6bff', '#5b8def', '#7c5cff', '#ff5c7c', '#ef6c00', '#16a34a', '#10b981', '#0ea5e9', '#8b5cf6', '#ec4899', '#f59e0b', '#6b7280'];
 
@@ -27,6 +27,10 @@
     todayLabel: $('#todayLabel'),
     summaryCards: $('#summaryCards'),
     focusTaskList: $('#focusTaskList'),
+    weeklyMeetingTabs: $('#weeklyMeetingTabs'),
+    weeklyMeetingTaskList: $('#weeklyMeetingTaskList'),
+    weeklyMeetingScopeLabel: $('#weeklyMeetingScopeLabel'),
+    weeklyMeetingScopeCount: $('#weeklyMeetingScopeCount'),
     projectProgressList: $('#projectProgressList'),
     weeklyTimeline: $('#weeklyTimeline'),
     teamStatusBody: $('#teamStatusBody'),
@@ -50,6 +54,7 @@
     taskEnd: $('#taskEnd'),
     taskStatus: $('#taskStatus'),
     taskPriority: $('#taskPriority'),
+    taskNeedsDecision: $('#taskNeedsDecision'),
     taskProgress: $('#taskProgress'),
     progressValue: $('#progressValue'),
     taskDescription: $('#taskDescription'),
@@ -74,6 +79,7 @@
     refreshDataBtn: $('#refreshDataBtn'),
     changeAccessKeyBtn: $('#changeAccessKeyBtn'),
     taskFilterRow: $('#taskFilterRow'),
+    periodSegment: $('#periodSegment'),
     openTaskModalBtn: $('#openTaskModalBtn'),
     meetingList: $('#meetingList'),
     meetingSummary: $('#meetingSummary'),
@@ -162,6 +168,7 @@
   let activeTeamId = localStorage.getItem(ACTIVE_TEAM_KEY) || '';
   let currentUser = localStorage.getItem(USER_KEY) || '';
   let meetingVisibleCount = 30;
+  let weeklyMeetingScope = 'ongoing';
   let activeView = 'dashboard';
   let taskLayout = 'list';
   let period = 'week';
@@ -261,7 +268,9 @@
       createdAt: String(task.createdAt || ''),
       updatedAt: String(task.updatedAt || ''),
       subtasks: normalizeSubtasks(task.subtasks),
-      teamId: String(task.teamId || '')
+      teamId: String(task.teamId || ''),
+      needsDecision: task.needsDecision === true || String(task.needsDecision).toLowerCase() === 'true',
+      completedAt: String(task.completedAt || '')
     };
   }
 
@@ -440,6 +449,103 @@
   function formatShort(value) { const d = dateOnly(value); return `${d.getMonth() + 1}.${String(d.getDate()).padStart(2, '0')}`; }
   function statusBadge(task) { const st = actualStatus(task); return `<span class="badge ${st}">${STATUS[st].label}</span>`; }
   function priorityBadge(task) { return ['urgent', 'high'].includes(task.priority) ? `<span class="badge priority-${task.priority}">${PRIORITY[task.priority]}</span>` : ''; }
+  function decisionBadge(task) { return task.needsDecision ? '<span class="badge decision">결정 필요</span>' : ''; }
+
+  function startOfNextWeek(reference = new Date()) { return addDays(startOfWeek(reference), 7); }
+  function endOfNextWeek(reference = new Date()) { return addDays(startOfWeek(reference), 13); }
+  function completedAtDate(task) {
+    const value = task.completedAt || task.updatedAt || '';
+    return value ? dateOnly(value) : null;
+  }
+  function deadlineBadge(task) {
+    if (task.status === 'completed') return '<span class="deadline-badge completed">완료</span>';
+    const today = dateOnly(iso(new Date()));
+    const end = dateOnly(task.end);
+    const diff = Math.round((end - today) / 86400000);
+    if (diff === 0) return '<span class="deadline-badge today">D-Day</span>';
+    if (diff > 0) return `<span class="deadline-badge upcoming">D-${diff}</span>`;
+    return `<span class="deadline-badge overdue">D+${Math.abs(diff)}</span>`;
+  }
+  function isNewThisWeek(task) {
+    if (!task.createdAt) return false;
+    const created = dateOnly(task.createdAt);
+    return created >= startOfWeek(new Date()) && created <= endOfWeek(new Date());
+  }
+  function weeklyMeetingBuckets(source = tasks) {
+    const today = dateOnly(iso(new Date()));
+    const weekStart = startOfWeek(today);
+    const weekEnd = endOfWeek(today);
+    const nextStart = startOfNextWeek(today);
+    const nextEnd = endOfNextWeek(today);
+    const open = source.filter(task => task.status !== 'completed');
+    return {
+      ongoing: open.filter(task => task.status === 'progress'),
+      due: open.filter(task => between(task.end, weekStart, weekEnd)),
+      next: open.filter(task => overlaps(task, nextStart, nextEnd)),
+      delayed: open.filter(task => actualStatus(task) === 'delayed'),
+      completed: source.filter(task => task.status === 'completed' && (() => {
+        const completed = completedAtDate(task);
+        return completed && completed >= weekStart && completed <= weekEnd;
+      })()),
+      decision: open.filter(task => task.needsDecision)
+    };
+  }
+  const WEEKLY_MEETING_META = {
+    ongoing: { label: '진행중', note: '현재 실행 중인 모든 업무' },
+    due: { label: '이번주 마감', note: '이번 주 종료 예정 업무' },
+    next: { label: '차주 일정', note: '다음 주에 진행되는 업무' },
+    delayed: { label: '지연', note: '마감일이 지난 미완료 업무' },
+    completed: { label: '이번주 완료', note: '이번 주에 완료 처리된 업무' },
+    decision: { label: '결정 필요', note: '회의에서 확인·결정이 필요한 업무' }
+  };
+  function sortWeeklyMeetingTasks(items, scope) {
+    return [...items].sort((a, b) => {
+      if (scope === 'completed') return String(b.completedAt || b.updatedAt).localeCompare(String(a.completedAt || a.updatedAt));
+      const urgent = (b.priority === 'urgent') - (a.priority === 'urgent');
+      const decision = Number(Boolean(b.needsDecision)) - Number(Boolean(a.needsDecision));
+      return decision || urgent || dateOnly(a.end) - dateOnly(b.end) || a.title.localeCompare(b.title, 'ko');
+    });
+  }
+  function renderWeeklyMeetingBoard(source = tasks) {
+    if (!els.weeklyMeetingTaskList || !els.weeklyMeetingTabs) return;
+    const buckets = weeklyMeetingBuckets(source);
+    const meta = WEEKLY_MEETING_META[weeklyMeetingScope] || WEEKLY_MEETING_META.ongoing;
+    const items = sortWeeklyMeetingTasks(buckets[weeklyMeetingScope] || [], weeklyMeetingScope);
+
+    els.weeklyMeetingTabs.innerHTML = Object.entries(WEEKLY_MEETING_META).map(([key, item]) => `
+      <button type="button" class="meeting-scope-tab ${weeklyMeetingScope === key ? 'active' : ''}" data-weekly-scope="${key}">
+        <span>${item.label}</span><b>${(buckets[key] || []).length}</b>
+      </button>`).join('');
+    if (els.weeklyMeetingScopeLabel) els.weeklyMeetingScopeLabel.textContent = meta.note;
+    if (els.weeklyMeetingScopeCount) els.weeklyMeetingScopeCount.textContent = `${items.length}건`;
+
+    els.weeklyMeetingTaskList.innerHTML = items.length ? items.map(task => {
+      const next = nextSubtask(task);
+      const badges = [
+        statusBadge(task),
+        priorityBadge(task),
+        task.needsDecision ? '<span class="badge decision">결정 필요</span>' : '',
+        isNewThisWeek(task) ? '<span class="badge new">신규</span>' : ''
+      ].filter(Boolean).join('');
+      return `
+        <button type="button" class="meeting-task-row ${task.needsDecision ? 'needs-decision' : ''}" data-open-task="${escapeHTML(task.id)}">
+          <div class="meeting-task-main">
+            <div class="meeting-task-title-line">
+              <strong>${escapeHTML(task.title)}</strong>
+              ${deadlineBadge(task)}
+            </div>
+            <div class="meeting-task-meta">
+              <span>${escapeHTML(task.project)}</span>
+              <span>${escapeHTML(task.assignee || '담당자 미정')}</span>
+              <span>${formatShort(task.start)} ~ ${formatShort(task.end)}</span>
+              <span>${task.progress}%</span>
+            </div>
+            ${next ? `<small class="meeting-task-next">다음 일정 ${formatShort(next.dueDate)} · ${escapeHTML(next.title)}</small>` : ''}
+          </div>
+          <div class="meeting-task-badges">${badges}</div>
+        </button>`;
+    }).join('') : `<div class="empty-state">${meta.label}에 해당하는 업무가 없습니다.</div>`;
+  }
 
   function memberInfo(name) {
     return teamMembers.find(member => member.name === name) || {};
@@ -639,6 +745,7 @@
       && saved.assignee === payload.assignee
       && saved.start === payload.start
       && saved.end === payload.end
+      && Boolean(saved.needsDecision) === Boolean(payload.needsDecision)
       && normalizedSubtaskSignature(saved.subtasks) === normalizedSubtaskSignature(payload.subtasks);
   }
 
@@ -1370,48 +1477,41 @@
   }
 
   function renderDashboard() {
-    const filtered = getFilteredTasks();
-    const today = dateOnly(iso(new Date()));
-    const weekEnd = endOfWeek(today);
+    // 주간마감회의는 '이번 주' 필터와 무관하게 현재 팀의 업무 전체 흐름을 보여줍니다.
+    // 담당자/상태/검색 필터는 그대로 적용되며, 긴 기간의 진행 업무도 빠지지 않습니다.
+    const filtered = getFilteredTasks({ ignorePeriod: true });
+    const buckets = weeklyMeetingBuckets(filtered);
     const counts = {
-      total: filtered.length,
-      progress: filtered.filter(task => actualStatus(task) === 'progress').length,
-      due: filtered.filter(task => actualStatus(task) !== 'completed' && between(task.end, today, weekEnd)).length,
-      delayed: filtered.filter(task => actualStatus(task) === 'delayed').length,
-      completed: filtered.filter(task => actualStatus(task) === 'completed').length
+      ongoing: buckets.ongoing.length,
+      due: buckets.due.length,
+      next: buckets.next.length,
+      delayed: buckets.delayed.length,
+      completed: buckets.completed.length,
+      decision: buckets.decision.length
     };
     const summary = [
-      ['total', '전체 업무', counts.total, '현재 조회 범위', '☷'],
-      ['progress', '진행 중', counts.progress, '실행 중인 업무', '↻'],
-      ['due', '이번 주 마감', counts.due, '확인이 필요한 일정', '◷'],
-      ['delayed', '지연', counts.delayed, '종료일이 지난 업무', '!'],
-      ['completed', '완료', counts.completed, '완료 처리된 업무', '✓']
+      ['ongoing', '진행중', counts.ongoing, '현재 실행 중인 모든 일정', '↻'],
+      ['due', '이번주 마감', counts.due, '이번 주 종료 예정', '◷'],
+      ['next', '차주 일정', counts.next, '다음 주 진행 일정', '→'],
+      ['delayed', '지연', counts.delayed, '마감일 경과', '!'],
+      ['completed', '이번주 완료', counts.completed, '이번 주 완료 처리', '✓'],
+      ['decision', '결정 필요', counts.decision, '회의에서 확인 필요', '?']
     ];
     els.summaryCards.innerHTML = summary.map(([key, label, value, note, icon]) => `
-      <article class="summary-card ${key}"><button data-summary-filter="${key}">
+      <article class="summary-card ${key}"><button type="button" data-weekly-scope="${key}">
         <div class="summary-label"><span>${label}</span><span class="summary-icon">${icon}</span></div>
         <div class="summary-value">${value}</div><div class="summary-note">${note}</div>
       </button></article>`).join('');
 
-    const focus = tasks.filter(task => task.assignee === currentUser && actualStatus(task) !== 'completed')
-      .filter(task => dateOnly(task.end) <= weekEnd)
-      .sort((a, b) => {
-        const delayedDiff = (actualStatus(a) === 'delayed' ? 0 : 1) - (actualStatus(b) === 'delayed' ? 0 : 1);
-        return delayedDiff || dateOnly(a.end) - dateOnly(b.end) || (b.priority === 'urgent') - (a.priority === 'urgent');
-      }).slice(0, 6);
-    els.focusTaskList.innerHTML = focus.length ? focus.map(task => `
-      <div class="focus-item" data-open-task="${escapeHTML(task.id)}">
-        <div class="focus-date"><strong>${String(dateOnly(task.end).getDate()).padStart(2, '0')}</strong><span>${dateOnly(task.end).getMonth() + 1}월</span></div>
-        <div class="focus-copy"><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} · ${task.progress}%</span>${nextSubtask(task) ? `<small>다음 일정 ${formatShort(nextSubtask(task).dueDate)} · ${escapeHTML(nextSubtask(task).title)}</small>` : ''}</div>
-        ${statusBadge(task)}
-      </div>`).join('') : '<div class="empty-state">이번 주 마감 예정인 내 업무가 없습니다.</div>';
+    renderWeeklyMeetingBoard(filtered);
 
-    const grouped = Object.values(tasks.reduce((acc, task) => {
+    const grouped = Object.values(filtered.reduce((acc, task) => {
       acc[task.project] ||= { name: task.project, tasks: [], total: 0 };
       acc[task.project].tasks.push(task);
       acc[task.project].total += Number(task.progress || 0);
       return acc;
-    }, {})).map(group => ({ ...group, avg: Math.round(group.total / group.tasks.length) })).sort((a, b) => b.tasks.length - a.tasks.length).slice(0, 5);
+    }, {})).map(group => ({ ...group, avg: Math.round(group.total / group.tasks.length) }))
+      .sort((a, b) => b.tasks.length - a.tasks.length).slice(0, 6);
     els.projectProgressList.innerHTML = grouped.length ? grouped.map(project => `
       <div class="project-row">
         <div class="project-head"><strong>${escapeHTML(project.name)}</strong><span>${project.avg}%</span></div>
@@ -1443,17 +1543,26 @@
 
   function renderTeamStatus() {
     const today = dateOnly(iso(new Date()));
+    const weekStart = startOfWeek(today);
     const weekEnd = endOfWeek(today);
+    const nextStart = startOfNextWeek(today);
+    const nextEnd = endOfNextWeek(today);
     const names = memberNames();
     els.teamStatusBody.innerHTML = names.map(name => {
       const mine = tasks.filter(task => task.assignee === name);
-      const before = mine.filter(task => actualStatus(task) === 'before').length;
-      const progress = mine.filter(task => actualStatus(task) === 'progress').length;
-      const due = mine.filter(task => actualStatus(task) !== 'completed' && between(task.end, today, weekEnd)).length;
-      const delayed = mine.filter(task => actualStatus(task) === 'delayed').length;
+      const open = mine.filter(task => task.status !== 'completed');
+      const progress = open.filter(task => task.status === 'progress').length;
+      const due = open.filter(task => between(task.end, weekStart, weekEnd)).length;
+      const next = open.filter(task => overlaps(task, nextStart, nextEnd)).length;
+      const delayed = open.filter(task => actualStatus(task) === 'delayed').length;
+      const decision = open.filter(task => task.needsDecision).length;
       return `<tr>
         <td><div class="team-person">${avatarMarkup(name)}<div><strong>${escapeHTML(name)}</strong><span>${escapeHTML([memberInfo(name).position, memberInfo(name).team].filter(Boolean).join(' · '))}</span></div></div></td>
-        <td>${before}</td><td class="metric-primary">${progress}</td><td>${due}</td><td class="${delayed ? 'metric-danger' : ''}">${delayed}</td>
+        <td class="metric-primary">${progress}</td>
+        <td>${due}</td>
+        <td>${next}</td>
+        <td class="${delayed ? 'metric-danger' : ''}">${delayed}</td>
+        <td class="${decision ? 'metric-warning' : ''}">${decision}</td>
       </tr>`;
     }).join('');
   }
@@ -1495,7 +1604,7 @@
         <td class="task-title-cell">
           <div class="task-title-wrap">
             <button type="button" class="subtask-toggle ${expanded ? 'open' : ''}" data-toggle-subtasks="${escapeHTML(task.id)}" aria-expanded="${expanded}" aria-label="업무 상세 ${expanded ? '접기' : '펼치기'}">${expanded ? '−' : '+'}</button>
-            <div><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} ${priorityBadge(task)}${detailsMeta ? ` · ${detailsMeta}` : ''}</span></div>
+            <div><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} ${priorityBadge(task)}${decisionBadge(task)}${detailsMeta ? ` · ${detailsMeta}` : ''}</span></div>
           </div>
         </td>
         <td><div class="assignee-chip">${avatarMarkup(task.assignee)}<div>${escapeHTML(task.assignee)}${memberInfo(task.assignee).position ? `<small>${escapeHTML(memberInfo(task.assignee).position)}</small>` : ''}</div></div></td>
@@ -1567,7 +1676,7 @@
       const items = filtered.filter(task => actualStatus(task) === status || (status === 'progress' && actualStatus(task) === 'delayed'));
       return `<section class="board-column"><div class="board-title">${STATUS[status].label}<span>${items.length}</span></div>${items.map(task => `
         <article class="task-card" data-open-task="${escapeHTML(task.id)}">
-          <div class="task-card-top">${statusBadge(task)}${priorityBadge(task)}</div>
+          <div class="task-card-top">${statusBadge(task)}${priorityBadge(task)}${decisionBadge(task)}</div>
           <h3>${escapeHTML(task.title)}</h3><p>${escapeHTML(task.project)} · ${escapeHTML(task.assignee)}</p>
           ${subtaskStats(task).total ? `<div class="task-card-checklist">✓ ${subtaskStats(task).completed}/${subtaskStats(task).total} 세부 일정 완료</div>` : ''}
           ${commentsForTask(task.id).length ? `<div class="task-card-comments">댓글 ${commentsForTask(task.id).length}</div>` : ''}
@@ -1806,7 +1915,7 @@
 
     if (view === 'dashboard') {
       $('#dashboardView').classList.add('active');
-      els.pageTitle.textContent = '업무 대시보드';
+      els.pageTitle.textContent = '주간마감 대시보드';
     } else if (view === 'calendar') {
       $('#calendarView').classList.add('active');
       els.pageTitle.textContent = '주간 일정';
@@ -1824,6 +1933,7 @@
     const meetingMode = view === 'meetings';
     const adminMode = view === 'admin';
     els.taskFilterRow.classList.toggle('hidden', meetingMode || adminMode);
+    els.periodSegment?.classList.toggle('hidden', view === 'dashboard');
     els.openTaskModalBtn.classList.toggle('hidden', adminMode);
     els.globalSearch.closest('.search-box')?.classList.toggle('hidden', adminMode);
     if (!adminMode) {
@@ -1846,6 +1956,7 @@
     els.taskEnd.value = task?.end || iso(addDays(new Date(), 1));
     els.taskStatus.value = task?.status || 'before';
     els.taskPriority.value = task?.priority || 'normal';
+    if (els.taskNeedsDecision) els.taskNeedsDecision.checked = Boolean(task?.needsDecision);
     els.taskProgress.value = task?.progress ?? 0;
     els.progressValue.textContent = `${els.taskProgress.value}%`;
     els.taskDescription.value = task?.description || '';
@@ -1884,6 +1995,7 @@
       end: els.taskEnd.value,
       status: els.taskStatus.value,
       priority: els.taskPriority.value,
+      needsDecision: Boolean(els.taskNeedsDecision?.checked),
       progress: Number(els.taskProgress.value),
       description: els.taskDescription.value.trim(),
       link: els.taskLink.value.trim(),
@@ -2246,18 +2358,16 @@
       }
       const jump = event.target.closest('[data-jump]');
       if (jump) switchView(jump.dataset.jump);
-      const summary = event.target.closest('[data-summary-filter]');
-      if (summary) {
-        const key = summary.dataset.summaryFilter;
-        if (key === 'due') {
-          els.statusFilter.value = 'all';
-          period = 'week';
-        } else if (key !== 'total') {
-          els.statusFilter.value = key;
-        } else {
-          els.statusFilter.value = 'all';
+      const weeklyScopeTarget = event.target.closest('[data-weekly-scope]');
+      if (weeklyScopeTarget) {
+        const key = weeklyScopeTarget.dataset.weeklyScope;
+        if (WEEKLY_MEETING_META[key]) {
+          weeklyMeetingScope = key;
+          renderWeeklyMeetingBoard(getFilteredTasks({ ignorePeriod: true }));
+          if (weeklyScopeTarget.closest('.summary-card')) {
+            $('#weeklyClosingPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
         }
-        switchView('tasks');
       }
     });
     $('#prevWeekBtn').addEventListener('click', () => { calendarAnchor = addDays(calendarAnchor, -7); renderCalendar(); });

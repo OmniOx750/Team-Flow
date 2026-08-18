@@ -99,7 +99,7 @@
       </section>
 
       <section class="filter-row" id="taskFilterRow">
-        <div class="segmented" id="periodSegment">
+        <div class="segmented hidden" id="periodSegment">
           <button class="active" data-period="week">이번 주</button>
           <button data-period="month">이번 달</button>
           <button data-period="all">전체</button>
@@ -123,15 +123,23 @@
         <div class="summary-grid" id="summaryCards"></div>
 
         <div class="dashboard-grid top-grid">
-          <article class="panel focus-panel">
-            <div class="panel-header">
+          <article class="panel weekly-closing-panel" id="weeklyClosingPanel">
+            <div class="panel-header wrap-header">
               <div>
-                <span class="section-kicker">FOCUS</span>
-                <h2>오늘·이번 주 해야 할 일</h2>
+                <span class="section-kicker">WEEKLY CLOSING</span>
+                <h2>주간마감회의</h2>
+                <p class="panel-subcopy">진행중 → 이번주 마감 → 차주 일정 → 지연 → 완료 → 결정 필요 순으로 확인하세요.</p>
               </div>
-              <button class="panel-link" data-jump="mine">내 업무 전체 보기</button>
+              <button class="panel-link" data-jump="tasks">전체 업무 보기</button>
             </div>
-            <div id="focusTaskList" class="focus-list"></div>
+
+            <div class="meeting-scope-tabs" id="weeklyMeetingTabs"></div>
+
+            <div class="meeting-scope-head">
+              <span id="weeklyMeetingScopeLabel">현재 실행 중인 모든 업무</span>
+              <strong id="weeklyMeetingScopeCount">0건</strong>
+            </div>
+            <div id="weeklyMeetingTaskList" class="meeting-task-list"></div>
           </article>
 
           <article class="panel project-panel">
@@ -166,7 +174,7 @@
             <div class="panel-header">
               <div>
                 <span class="section-kicker">TEAM</span>
-                <h2>팀원별 업무 현황</h2>
+                <h2>팀원별 주간 업무 현황</h2>
               </div>
             </div>
             <div class="table-scroll">
@@ -174,10 +182,11 @@
                 <thead>
                   <tr>
                     <th>담당자</th>
-                    <th>진행 전</th>
                     <th>진행 중</th>
-                    <th>이번 주 마감</th>
+                    <th>이번주 마감</th>
+                    <th>차주 일정</th>
                     <th>지연</th>
+                    <th>결정 필요</th>
                   </tr>
                 </thead>
                 <tbody id="teamStatusBody"></tbody>
@@ -386,6 +395,14 @@
               <option value="urgent">긴급</option>
               <option value="low">낮음</option>
             </select>
+          </label>
+          <label class="decision-toggle-field">
+            <span>회의 표시</span>
+            <span class="inline-toggle-card">
+              <input id="taskNeedsDecision" type="checkbox" />
+              <span class="inline-toggle-ui" aria-hidden="true"></span>
+              <span class="inline-toggle-copy"><strong>이슈/결정 필요</strong><small>주간마감회의의 ‘결정 필요’에 표시</small></span>
+            </span>
           </label>
           <label class="full-field">
             <span>진행률 <b id="progressValue">0%</b></span>
