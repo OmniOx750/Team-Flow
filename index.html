@@ -170,28 +170,16 @@
         </article>
 
         <div class="dashboard-grid bottom-grid">
-          <article class="panel">
-            <div class="panel-header">
+          <article class="panel team-status-panel">
+            <div class="panel-header wrap-header">
               <div>
                 <span class="section-kicker">TEAM</span>
                 <h2>팀원별 주간 업무 현황</h2>
+                <p class="panel-subcopy">담당자를 클릭하면 대시보드 전체가 해당 담당자 업무로 즉시 필터링됩니다.</p>
               </div>
+              <button type="button" class="panel-link" data-member-filter="all">전체 담당자 보기</button>
             </div>
-            <div class="table-scroll">
-              <table class="team-table">
-                <thead>
-                  <tr>
-                    <th>담당자</th>
-                    <th>진행 중</th>
-                    <th>이번주 마감</th>
-                    <th>차주 일정</th>
-                    <th>지연</th>
-                    <th>결정 필요</th>
-                  </tr>
-                </thead>
-                <tbody id="teamStatusBody"></tbody>
-              </table>
-            </div>
+            <div id="teamStatusBody" class="team-status-grid"></div>
           </article>
 
           <article class="panel status-panel">

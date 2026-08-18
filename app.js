@@ -534,11 +534,16 @@
               <strong>${escapeHTML(task.title)}</strong>
               ${deadlineBadge(task)}
             </div>
-            <div class="meeting-task-meta">
-              <span>${escapeHTML(task.project)}</span>
-              <span>${escapeHTML(task.assignee || '담당자 미정')}</span>
-              <span>${formatShort(task.start)} ~ ${formatShort(task.end)}</span>
-              <span>${task.progress}%</span>
+            <div class="meeting-task-detail-row">
+              <span class="meeting-assignee-chip" data-member-filter="${escapeHTML(task.assignee || '')}" role="button" tabindex="0"${avatarStyle(task.assignee || '담당자 미정')} aria-label="${escapeHTML(task.assignee || '담당자 미정')} 담당 업무만 보기">
+                ${avatarMarkup(task.assignee || '담당자 미정', 'meeting-assignee-avatar')}
+                <span><small>담당자</small><strong>${escapeHTML(task.assignee || '담당자 미정')}</strong></span>
+              </span>
+              <div class="meeting-task-meta">
+                <span>${escapeHTML(task.project)}</span>
+                <span>${formatShort(task.start)} ~ ${formatShort(task.end)}</span>
+                <span>${task.progress}%</span>
+              </div>
             </div>
             ${next ? `<small class="meeting-task-next">다음 일정 ${formatShort(next.dueDate)} · ${escapeHTML(next.title)}</small>` : ''}
           </div>
@@ -1531,7 +1536,7 @@
     let html = '<div class="timeline"><div class="timeline-head">업무 / 담당자</div>';
     html += days.map(day => `<div class="timeline-head ${isSameDay(day, new Date()) ? 'today' : ''}">${['월', '화', '수', '목', '금', '토', '일'][(day.getDay() + 6) % 7]} ${day.getMonth() + 1}/${day.getDate()}</div>`).join('');
     visible.forEach(task => {
-      html += `<div class="timeline-label" data-open-task="${escapeHTML(task.id)}"><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.assignee)}</span></div>`;
+      html += `<div class="timeline-label" data-open-task="${escapeHTML(task.id)}"><strong>${escapeHTML(task.title)}</strong><button type="button" class="timeline-assignee" data-member-filter="${escapeHTML(task.assignee)}">${avatarMarkup(task.assignee, 'timeline-assignee-avatar')}<span>${escapeHTML(task.assignee)}</span></button></div>`;
       days.forEach(day => {
         const inside = day >= dateOnly(task.start) && day <= dateOnly(task.end);
         html += `<div class="timeline-day">${inside ? `<div class="timeline-bar ${actualStatus(task)}" data-open-task="${escapeHTML(task.id)}">${task.progress}%</div>` : ''}</div>`;
@@ -1548,7 +1553,8 @@
     const nextStart = startOfNextWeek(today);
     const nextEnd = endOfNextWeek(today);
     const names = memberNames();
-    els.teamStatusBody.innerHTML = names.map(name => {
+    const selected = els.assigneeFilter?.value || 'all';
+    els.teamStatusBody.innerHTML = names.length ? names.map(name => {
       const mine = tasks.filter(task => task.assignee === name);
       const open = mine.filter(task => task.status !== 'completed');
       const progress = open.filter(task => task.status === 'progress').length;
@@ -1556,15 +1562,26 @@
       const next = open.filter(task => overlaps(task, nextStart, nextEnd)).length;
       const delayed = open.filter(task => actualStatus(task) === 'delayed').length;
       const decision = open.filter(task => task.needsDecision).length;
-      return `<tr>
-        <td><div class="team-person">${avatarMarkup(name)}<div><strong>${escapeHTML(name)}</strong><span>${escapeHTML([memberInfo(name).position, memberInfo(name).team].filter(Boolean).join(' · '))}</span></div></div></td>
-        <td class="metric-primary">${progress}</td>
-        <td>${due}</td>
-        <td>${next}</td>
-        <td class="${delayed ? 'metric-danger' : ''}">${delayed}</td>
-        <td class="${decision ? 'metric-warning' : ''}">${decision}</td>
-      </tr>`;
-    }).join('');
+      const info = memberInfo(name);
+      return `<button type="button" class="team-status-card ${selected === name ? 'active' : ''}" data-member-filter="${escapeHTML(name)}" aria-pressed="${selected === name}">
+        <div class="team-status-person">
+          ${avatarMarkup(name, 'team-status-avatar')}
+          <div class="team-status-person-copy">
+            <span class="team-status-label">담당자</span>
+            <strong>${escapeHTML(name)}</strong>
+            <small>${escapeHTML([info.position, info.team].filter(Boolean).join(' · ') || '팀원')}</small>
+          </div>
+          <span class="team-status-filter-hint">${selected === name ? '필터 적용 중' : '업무 보기'} →</span>
+        </div>
+        <div class="team-status-metrics">
+          <span><small>진행 중</small><b class="metric-primary">${progress}</b></span>
+          <span><small>이번주 마감</small><b>${due}</b></span>
+          <span><small>차주 일정</small><b>${next}</b></span>
+          <span><small>지연</small><b class="${delayed ? 'metric-danger' : ''}">${delayed}</b></span>
+          <span><small>결정 필요</small><b class="${decision ? 'metric-warning' : ''}">${decision}</b></span>
+        </div>
+      </button>`;
+    }).join('') : '<div class="empty-state">등록된 팀원이 없습니다.</div>';
   }
 
   function renderStatusChart(filtered) {
@@ -1607,7 +1624,7 @@
             <div><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} ${priorityBadge(task)}${decisionBadge(task)}${detailsMeta ? ` · ${detailsMeta}` : ''}</span></div>
           </div>
         </td>
-        <td><div class="assignee-chip">${avatarMarkup(task.assignee)}<div>${escapeHTML(task.assignee)}${memberInfo(task.assignee).position ? `<small>${escapeHTML(memberInfo(task.assignee).position)}</small>` : ''}</div></div></td>
+        <td><button type="button" class="assignee-chip" data-member-filter="${escapeHTML(task.assignee)}" aria-label="${escapeHTML(task.assignee)} 담당 업무만 보기">${avatarMarkup(task.assignee)}<div><span>담당자</span><strong>${escapeHTML(task.assignee)}</strong>${memberInfo(task.assignee).position ? `<small>${escapeHTML(memberInfo(task.assignee).position)}</small>` : ''}</div></button></td>
         <td>${formatShort(task.start)} ~ ${formatShort(task.end)}</td>
         <td>${statusBadge(task)}</td><td><strong>${task.progress}%</strong></td>
         <td class="row-actions"><button class="row-action" data-open-task="${escapeHTML(task.id)}">수정</button></td>
@@ -2349,6 +2366,18 @@
         const id = meetingToggle.dataset.toggleMeeting;
         if (expandedMeetingIds.has(id)) expandedMeetingIds.delete(id); else expandedMeetingIds.add(id);
         renderMeetingList();
+        return;
+      }
+      const memberFilterTarget = event.target.closest('[data-member-filter]');
+      if (memberFilterTarget) {
+        event.preventDefault();
+        event.stopPropagation();
+        const name = memberFilterTarget.dataset.memberFilter || 'all';
+        const current = els.assigneeFilter?.value || 'all';
+        const next = name === 'all' || current === name ? 'all' : name;
+        if (els.assigneeFilter) els.assigneeFilter.value = next;
+        renderAll();
+        showToast(next === 'all' ? '담당자 필터를 해제했습니다.' : `${name} 담당 업무만 표시합니다.`);
         return;
       }
       const taskTarget = event.target.closest('[data-open-task]');
