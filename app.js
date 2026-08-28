@@ -14,7 +14,7 @@
     delayed: { label: '지연', color: '#e14a55' }
   };
   const PRIORITY = { low: '낮음', normal: '보통', high: '높음', urgent: '긴급' };
-  const REQUIRED_API_VERSION = '2.2.0';
+  const REQUIRED_API_VERSION = '2.4.0';
   const DEFAULT_AVATAR_COLOR = '#2f6bff';
   const AVATAR_PALETTE = ['#2f6bff', '#5b8def', '#7c5cff', '#ff5c7c', '#ef6c00', '#16a34a', '#10b981', '#0ea5e9', '#8b5cf6', '#ec4899', '#f59e0b', '#6b7280'];
 
@@ -167,7 +167,12 @@
   let authState = { role: 'team', isAdmin: false, teamId: '', teamName: '' };
   let activeTeamId = localStorage.getItem(ACTIVE_TEAM_KEY) || '';
   let currentUser = localStorage.getItem(USER_KEY) || '';
-  let meetingVisibleCount = 30;
+  let meetingNextCursor = 0;
+  let meetingHasMore = false;
+  let meetingLoading = false;
+  let meetingsInitialized = false;
+  const commentLoadedTaskIds = new Set();
+  const commentLoadingTaskIds = new Set();
   let weeklyMeetingScope = 'ongoing';
   let activeView = 'dashboard';
   let taskLayout = 'list';
@@ -771,7 +776,7 @@
     els.lastSyncLabel.textContent = detail;
   }
 
-  function jsonpRequest(action) {
+  function jsonpRequest(action, params = {}) {
     return new Promise((resolve, reject) => {
       if (!apiConfigured()) return reject(new Error('config.js에 Apps Script 웹 앱 URL을 입력하세요.'));
       const token = getAccessToken({ ask: true });
@@ -800,6 +805,10 @@
       url.searchParams.set('callback', callbackName);
       url.searchParams.set('token', token);
       if (activeTeamId) url.searchParams.set('teamId', activeTeamId);
+      Object.entries(params || {}).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === '') return;
+        url.searchParams.set(key, String(value));
+      });
       url.searchParams.set('_', Date.now().toString());
       script.src = url.toString();
       script.async = true;
@@ -823,6 +832,19 @@
     });
   }
 
+  function updateAuthFromResponse(response) {
+    authState = {
+      role: String(response.auth?.role || authState.role || 'team'),
+      isAdmin: Boolean(response.auth?.isAdmin),
+      teamId: String(response.auth?.teamId || activeTeamId || ''),
+      teamName: String(response.auth?.teamName || authState.teamName || '')
+    };
+    if (authState.teamId) {
+      activeTeamId = authState.teamId;
+      localStorage.setItem(ACTIVE_TEAM_KEY, activeTeamId);
+    }
+  }
+
   async function loadRemoteData({ silent = false } = {}) {
     if (isSyncing) return;
     if (!apiConfigured()) {
@@ -833,26 +855,24 @@
 
     isSyncing = true;
     els.refreshDataBtn.disabled = true;
-    if (!silent) setConnectionState('loading', 'Google Sheets 동기화 중', '현재 팀의 업무와 회의록을 불러오고 있습니다.');
+    if (!silent) setConnectionState('loading', '빠른 동기화 중', '대시보드에 필요한 데이터부터 먼저 불러오고 있습니다.');
     try {
-      const response = await jsonpRequest('getData');
+      const response = await jsonpRequest('bootstrap');
       assertApiVersion(response);
-
-      authState = {
-        role: String(response.auth?.role || 'team'),
-        isAdmin: Boolean(response.auth?.isAdmin),
-        teamId: String(response.auth?.teamId || ''),
-        teamName: String(response.auth?.teamName || '')
-      };
-      if (authState.teamId) {
-        activeTeamId = authState.teamId;
-        localStorage.setItem(ACTIVE_TEAM_KEY, activeTeamId);
-      }
+      updateAuthFromResponse(response);
 
       companyTeams = Array.isArray(response.teams) ? response.teams.map(normalizeTeam) : [];
       tasks = Array.isArray(response.tasks) ? response.tasks.map(normalizeTask) : [];
-      comments = Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [];
-      meetings = Array.isArray(response.meetings) ? response.meetings.map(normalizeMeeting) : [];
+      comments = [];
+      commentLoadedTaskIds.clear();
+      commentLoadingTaskIds.clear();
+
+      meetings = [];
+      meetingNextCursor = 0;
+      meetingHasMore = true;
+      meetingLoading = false;
+      meetingsInitialized = false;
+
       teamMembers = Array.isArray(response.members) ? response.members.map(normalizeMember).filter(member => member.active) : [];
       adminMembers = Array.isArray(response.allMembers) ? response.allMembers.map(normalizeMember) : [...teamMembers];
       projectCategories = Array.isArray(response.projectCategories) ? response.projectCategories.map(normalizeProjectCategory) : [];
@@ -861,7 +881,11 @@
       ensureCurrentUser();
       renderAll();
       const syncedAt = new Date();
-      setConnectionState('connected', `${authState.teamName || '현재 팀'} 연결됨`, `마지막 동기화 ${syncedAt.getHours()}:${String(syncedAt.getMinutes()).padStart(2, '0')}`);
+      setConnectionState(
+        'connected',
+        `${authState.teamName || '현재 팀'} 연결됨`,
+        `빠른 로딩 · 마지막 동기화 ${syncedAt.getHours()}:${String(syncedAt.getMinutes()).padStart(2, '0')}`
+      );
     } catch (error) {
       console.error(error);
       tasks = [];
@@ -872,6 +896,11 @@
       projectCategories = [];
       teamShortcuts = [];
       companyTeams = [];
+      commentLoadedTaskIds.clear();
+      commentLoadingTaskIds.clear();
+      meetingNextCursor = 0;
+      meetingHasMore = false;
+      meetingsInitialized = false;
       authState = { role: 'team', isAdmin: false, teamId: '', teamName: '' };
       setConnectionState('error', 'Google Sheets 연결 실패', error.message);
       renderAll();
@@ -882,63 +911,235 @@
     }
   }
 
+  function verificationParams(action, payload) {
+    return {
+      mutationAction: action,
+      id: payload?.id || payload?.teamId || '',
+      name: payload?.name || '',
+      targetTeamId: payload?.teamId || activeTeamId || ''
+    };
+  }
+
+  function verificationMatches(action, payload, verification) {
+    if (!verification || verification.applied !== true) return false;
+    if (['deleteTask', 'deleteComment', 'deleteMeeting'].includes(action)) return true;
+    const item = verification.item;
+    if (!item) return false;
+
+    if (action === 'saveTask') {
+      const saved = normalizeTask(item);
+      return saved.id === payload.id
+        && saved.title === payload.title
+        && saved.project === payload.project
+        && saved.assignee === payload.assignee
+        && saved.start === payload.start
+        && saved.end === payload.end
+        && Boolean(saved.needsDecision) === Boolean(payload.needsDecision)
+        && normalizedSubtaskSignature(saved.subtasks) === normalizedSubtaskSignature(payload.subtasks);
+    }
+    if (action === 'addComment') {
+      const saved = normalizeComment(item);
+      return saved.id === payload.id && saved.taskId === payload.taskId
+        && saved.author === payload.author && saved.content === payload.content;
+    }
+    if (action === 'saveMeeting') {
+      const saved = normalizeMeeting(item);
+      return saved.id === payload.id && saved.title === payload.title
+        && saved.date === payload.date && saved.recorder === payload.recorder
+        && JSON.stringify(saved.attendees) === JSON.stringify(payload.attendees)
+        && JSON.stringify(normalizeMeetingActions(saved.actionItems)) === JSON.stringify(normalizeMeetingActions(payload.actionItems));
+    }
+    if (action === 'saveMemberProfile' || action === 'saveMemberAdmin') {
+      const saved = normalizeMember(item);
+      return saved.name === payload.name
+        && (action === 'saveMemberProfile' || (
+          saved.position === payload.position
+          && Boolean(saved.active) === Boolean(payload.active)
+          && Number(saved.sortOrder) === Number(payload.sortOrder)
+        ));
+    }
+    if (action === 'saveProjectCategory') {
+      const saved = normalizeProjectCategory(item);
+      return saved.id === payload.id && saved.name === payload.name && Boolean(saved.active) === Boolean(payload.active);
+    }
+    if (action === 'saveTeamShortcut') {
+      const saved = normalizeTeamShortcut(item);
+      return saved.id === payload.id
+        && saved.name === payload.name
+        && saved.url === safeShortcutUrl(payload.url)
+        && Boolean(saved.active) === Boolean(payload.active)
+        && Boolean(saved.openNewTab) === Boolean(payload.openNewTab)
+        && Number(saved.sortOrder) === Number(payload.sortOrder);
+    }
+    if (action === 'saveTeam') {
+      const saved = normalizeTeam(item);
+      return saved.teamId === payload.teamId && saved.teamName === payload.teamName
+        && Boolean(saved.active) === Boolean(payload.active);
+    }
+    return true;
+  }
+
+  function upsertById(list, item) {
+    if (!item?.id) return list;
+    const index = list.findIndex(existing => existing.id === item.id);
+    if (index < 0) return [...list, item];
+    const next = [...list];
+    next[index] = item;
+    return next;
+  }
+
+  function applyVerifiedMutation(action, payload, verification) {
+    const item = verification?.item || null;
+
+    if (action === 'saveTask' && item) {
+      tasks = upsertById(tasks, normalizeTask(item));
+    } else if (action === 'deleteTask') {
+      tasks = tasks.filter(task => task.id !== payload.id);
+      comments = comments.filter(comment => comment.taskId !== payload.id);
+      commentLoadedTaskIds.delete(payload.id);
+      commentLoadingTaskIds.delete(payload.id);
+      expandedTaskIds.delete(payload.id);
+    } else if (action === 'addComment' && item) {
+      const saved = normalizeComment(item);
+      comments = upsertById(comments, saved);
+      commentLoadedTaskIds.add(saved.taskId);
+    } else if (action === 'deleteComment') {
+      comments = comments.filter(comment => comment.id !== payload.id);
+    } else if (action === 'saveMeeting' && item) {
+      meetings = upsertById(meetings, normalizeMeeting(item))
+        .sort((a, b) => `${b.date} ${b.startTime}`.localeCompare(`${a.date} ${a.startTime}`));
+    } else if (action === 'deleteMeeting') {
+      meetings = meetings.filter(meeting => meeting.id !== payload.id);
+      expandedMeetingIds.delete(payload.id);
+    } else if ((action === 'saveMemberProfile' || action === 'saveMemberAdmin') && item) {
+      const saved = normalizeMember(item);
+      adminMembers = upsertById(adminMembers, saved);
+      if (saved.teamId === activeTeamId) {
+        const allForTeam = upsertById(
+          adminMembers.filter(member => member.teamId === activeTeamId || !member.teamId),
+          saved
+        );
+        teamMembers = allForTeam.filter(member => member.active);
+      }
+    } else if (action === 'saveProjectCategory' && item) {
+      projectCategories = upsertById(projectCategories, normalizeProjectCategory(item));
+    } else if (action === 'saveTeamShortcut' && item) {
+      teamShortcuts = upsertById(teamShortcuts, normalizeTeamShortcut(item));
+    } else if (action === 'saveTeam' && item) {
+      const saved = normalizeTeam(item);
+      const index = companyTeams.findIndex(team => team.teamId === saved.teamId);
+      if (index < 0) companyTeams = [...companyTeams, saved];
+      else {
+        const next = [...companyTeams];
+        next[index] = saved;
+        companyTeams = next;
+      }
+    }
+
+    ensureCurrentUser();
+    renderAll();
+  }
+
   async function mutateAndRefresh(action, payload, successMessage) {
-    setConnectionState('loading', 'Google Sheets 저장 중', '저장 결과를 확인하고 있습니다.');
+    setConnectionState('loading', 'Google Sheets 저장 중', '변경한 항목만 빠르게 확인하고 있습니다.');
     await postMutation(action, payload);
 
-    const attempts = Number(CONFIG.SYNC_POLL_ATTEMPTS) || 12;
-    const interval = Number(CONFIG.SYNC_POLL_INTERVAL_MS) || 800;
+    const attempts = 6;
+    const interval = Math.min(500, Math.max(250, Number(CONFIG.SYNC_POLL_INTERVAL_MS) || 350));
     let lastError = null;
 
     for (let i = 0; i < attempts; i += 1) {
-      await sleep(interval);
+      await sleep(i === 0 ? 220 : interval);
       try {
-        const response = await jsonpRequest('getData');
+        const response = await jsonpRequest('verifyMutation', verificationParams(action, payload));
         assertApiVersion(response);
-
-        const remoteTasks = Array.isArray(response.tasks) ? response.tasks.map(normalizeTask) : [];
-        const remoteComments = Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [];
-        const remoteMeetings = Array.isArray(response.meetings) ? response.meetings.map(normalizeMeeting) : [];
-        const remoteMembers = Array.isArray(response.members) ? response.members.map(normalizeMember).filter(member => member.active) : [];
-        const remoteAdminMembers = Array.isArray(response.allMembers) ? response.allMembers.map(normalizeMember) : [...remoteMembers];
-        const remoteProjectCategories = Array.isArray(response.projectCategories) ? response.projectCategories.map(normalizeProjectCategory) : [];
-        const remoteTeamShortcuts = Array.isArray(response.teamShortcuts) ? response.teamShortcuts.map(normalizeTeamShortcut) : [];
-        const remoteTeams = Array.isArray(response.teams) ? response.teams.map(normalizeTeam) : companyTeams;
-
-        if (!mutationApplied(action, payload, remoteTasks, remoteComments, remoteMembers, remoteMeetings, remoteProjectCategories, remoteTeams, remoteAdminMembers, remoteTeamShortcuts)) {
+        const verification = response.verification;
+        if (!verificationMatches(action, payload, verification)) {
           lastError = new Error('저장 내용이 아직 Google Sheets에 반영되지 않았습니다.');
           continue;
         }
 
-        authState = {
-          role: String(response.auth?.role || authState.role || 'team'),
-          isAdmin: Boolean(response.auth?.isAdmin),
-          teamId: String(response.auth?.teamId || activeTeamId),
-          teamName: String(response.auth?.teamName || authState.teamName || '')
-        };
-        if (authState.teamId) {
-          activeTeamId = authState.teamId;
-          localStorage.setItem(ACTIVE_TEAM_KEY, activeTeamId);
-        }
-        tasks = remoteTasks;
-        comments = remoteComments;
-        meetings = remoteMeetings;
-        teamMembers = remoteMembers;
-        adminMembers = remoteAdminMembers;
-        projectCategories = remoteProjectCategories;
-        teamShortcuts = remoteTeamShortcuts;
-        companyTeams = remoteTeams;
-        ensureCurrentUser();
-        renderAll();
-        setConnectionState('connected', `${authState.teamName || '현재 팀'} 연결됨`, '방금 변경 사항을 저장했습니다.');
+        applyVerifiedMutation(action, payload, verification);
+        setConnectionState('connected', `${authState.teamName || '현재 팀'} 연결됨`, '변경한 항목만 저장 확인 완료');
         showToast(successMessage);
-        return;
+        return verification;
       } catch (error) {
         lastError = error;
       }
     }
 
     throw lastError || new Error('저장 내용을 확인하지 못했습니다. Apps Script를 새 버전으로 배포했는지 확인하세요.');
+  }
+
+  async function loadCommentsForTask(taskId, { force = false } = {}) {
+    const id = String(taskId || '');
+    if (!id || commentLoadingTaskIds.has(id)) return;
+    if (!force && commentLoadedTaskIds.has(id)) return;
+
+    commentLoadingTaskIds.add(id);
+    renderTaskList();
+    try {
+      const response = await jsonpRequest('getComments', { taskId: id });
+      assertApiVersion(response);
+      comments = comments.filter(comment => comment.taskId !== id);
+      const loaded = Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [];
+      comments.push(...loaded);
+      commentLoadedTaskIds.add(id);
+    } catch (error) {
+      console.error(error);
+      showToast(`댓글을 불러오지 못했습니다: ${error.message}`);
+    } finally {
+      commentLoadingTaskIds.delete(id);
+      renderTaskList();
+    }
+  }
+
+  async function loadInitialMeetings() {
+    if (meetingsInitialized || meetingLoading) return;
+    meetingLoading = true;
+    renderMeetingList();
+    try {
+      const response = await jsonpRequest('getMeetingsPage', { cursor: 0, limit: 30 });
+      assertApiVersion(response);
+      meetings = Array.isArray(response.meetings) ? response.meetings.map(normalizeMeeting) : [];
+      meetingNextCursor = Number(response.meetingPage?.nextCursor) || 0;
+      meetingHasMore = Boolean(response.meetingPage?.hasMore);
+      meetingsInitialized = true;
+    } catch (error) {
+      console.error(error);
+      meetingHasMore = false;
+      showToast(`회의록을 불러오지 못했습니다: ${error.message}`);
+    } finally {
+      meetingLoading = false;
+      renderMeetingList();
+    }
+  }
+
+  async function loadMoreMeetings() {
+    if (!meetingsInitialized) return loadInitialMeetings();
+    if (meetingLoading || !meetingHasMore) return;
+    meetingLoading = true;
+    renderMeetingList();
+    try {
+      const response = await jsonpRequest('getMeetingsPage', {
+        cursor: meetingNextCursor,
+        limit: 30
+      });
+      assertApiVersion(response);
+      const incoming = Array.isArray(response.meetings) ? response.meetings.map(normalizeMeeting) : [];
+      incoming.forEach(item => {
+        if (!meetings.some(existing => existing.id === item.id)) meetings.push(item);
+      });
+      meetings.sort((a, b) => `${b.date} ${b.startTime}`.localeCompare(`${a.date} ${a.startTime}`));
+      meetingNextCursor = Number(response.meetingPage?.nextCursor) || 0;
+      meetingHasMore = Boolean(response.meetingPage?.hasMore);
+    } catch (error) {
+      console.error(error);
+      showToast(`이전 회의록을 불러오지 못했습니다: ${error.message}`);
+    } finally {
+      meetingLoading = false;
+      renderMeetingList();
+    }
   }
 
   function memberNames() {
@@ -1408,7 +1609,9 @@
     activeTeamId = teamId;
     localStorage.setItem(ACTIVE_TEAM_KEY, teamId);
     currentUser = '';
-    meetingVisibleCount = 30;
+    meetingNextCursor = 0;
+    meetingHasMore = false;
+    meetingsInitialized = false;
     resetMemberAdminForm();
     await loadRemoteData();
     if (activeView !== 'admin') renderAll();
@@ -1611,10 +1814,12 @@
     const rows = filtered.sort((a, b) => dateOnly(a.end) - dateOnly(b.end)).map(task => {
       const stats = subtaskStats(task);
       const taskComments = commentsForTask(task.id);
+      const commentsLoaded = commentLoadedTaskIds.has(task.id);
+      const commentsLoading = commentLoadingTaskIds.has(task.id);
       const expanded = expandedTaskIds.has(task.id);
       const detailsMeta = [
         stats.total ? `체크리스트 ${stats.completed}/${stats.total}` : '',
-        taskComments.length ? `댓글 ${taskComments.length}` : ''
+        commentsLoaded && taskComments.length ? `댓글 ${taskComments.length}` : ''
       ].filter(Boolean).join(' · ');
 
       const mainRow = `<tr class="task-main-row" data-open-task="${escapeHTML(task.id)}">
@@ -1653,21 +1858,25 @@
             <small>현재 사용자 · ${escapeHTML(currentUser || '사용자 미선택')}</small>
           </div>
           <div class="comment-thread">
-            ${taskComments.length ? taskComments.map(comment => {
-              const author = memberInfo(comment.author);
-              const canDelete = comment.author === currentUser;
-              return `<article class="comment-item">
-                ${avatarMarkup(comment.author, 'comment-avatar')}
-                <div class="comment-body">
-                  <div class="comment-meta">
-                    <div><strong>${escapeHTML(comment.author)}</strong>${author.position ? `<span>${escapeHTML(author.position)}</span>` : ''}</div>
-                    <time>${escapeHTML(formatCommentTime(comment.createdAt))}</time>
-                  </div>
-                  <p>${escapeHTML(comment.content).replace(/\n/g, '<br>')}</p>
-                </div>
-                ${canDelete ? `<button type="button" class="comment-delete" data-delete-comment="${escapeHTML(comment.id)}" aria-label="댓글 삭제">×</button>` : ''}
-              </article>`;
-            }).join('') : '<div class="comment-empty">첫 코멘트를 남겨보세요.</div>'}
+            ${commentsLoading
+              ? '<div class="comment-empty">코멘트를 불러오는 중입니다…</div>'
+              : !commentsLoaded
+                ? '<div class="comment-empty">업무를 펼치면 코멘트를 필요한 순간에만 불러옵니다.</div>'
+                : taskComments.length ? taskComments.map(comment => {
+                  const author = memberInfo(comment.author);
+                  const canDelete = comment.author === currentUser;
+                  return `<article class="comment-item">
+                    ${avatarMarkup(comment.author, 'comment-avatar')}
+                    <div class="comment-body">
+                      <div class="comment-meta">
+                        <div><strong>${escapeHTML(comment.author)}</strong>${author.position ? `<span>${escapeHTML(author.position)}</span>` : ''}</div>
+                        <time>${escapeHTML(formatCommentTime(comment.createdAt))}</time>
+                      </div>
+                      <p>${escapeHTML(comment.content).replace(/\n/g, '<br>')}</p>
+                    </div>
+                    ${canDelete ? `<button type="button" class="comment-delete" data-delete-comment="${escapeHTML(comment.id)}" aria-label="댓글 삭제">×</button>` : ''}
+                  </article>`;
+                }).join('') : '<div class="comment-empty">첫 코멘트를 남겨보세요.</div>'}
           </div>
           <form class="comment-composer" data-comment-form="${escapeHTML(task.id)}">
             ${avatarMarkup(currentUser, 'comment-avatar composer-avatar')}
@@ -1696,7 +1905,7 @@
           <div class="task-card-top">${statusBadge(task)}${priorityBadge(task)}${decisionBadge(task)}</div>
           <h3>${escapeHTML(task.title)}</h3><p>${escapeHTML(task.project)} · ${escapeHTML(task.assignee)}</p>
           ${subtaskStats(task).total ? `<div class="task-card-checklist">✓ ${subtaskStats(task).completed}/${subtaskStats(task).total} 세부 일정 완료</div>` : ''}
-          ${commentsForTask(task.id).length ? `<div class="task-card-comments">댓글 ${commentsForTask(task.id).length}</div>` : ''}
+          ${commentLoadedTaskIds.has(task.id) && commentsForTask(task.id).length ? `<div class="task-card-comments">댓글 ${commentsForTask(task.id).length}</div>` : ''}
           <div class="mini-progress"><i style="width:${task.progress}%"></i></div>
           <div class="task-card-footer"><span>${formatShort(task.start)} ~ ${formatShort(task.end)}</span><strong>${task.progress}%</strong></div>
         </article>`).join('') || '<div class="empty-state">업무 없음</div>'}</section>`;
@@ -1739,6 +1948,13 @@
 
   function renderMeetingList() {
     if (!els.meetingList) return;
+    if (!meetingsInitialized) {
+      els.meetingSummary.innerHTML = '<span><strong>—</strong> 최근 기록</span><span><strong>—</strong> 이번 달</span><span><strong>—</strong> 미완료 후속 업무</span>';
+      els.meetingList.innerHTML = meetingLoading
+        ? '<div class="meeting-empty"><div class="meeting-empty-icon">↻</div><strong>최근 회의록을 불러오는 중입니다.</strong><span>회의록 메뉴를 열었을 때만 필요한 기록을 가져옵니다.</span></div>'
+        : '<div class="meeting-empty"><div class="meeting-empty-icon">✦</div><strong>회의록을 필요한 순간에만 불러옵니다.</strong><span>잠시 후 최근 기록이 표시됩니다.</span></div>';
+      return;
+    }
     const filtered = meetingSearchResults();
     const thisMonth = meetings.filter(meeting => {
       const date = dateOnly(meeting.date);
@@ -1746,14 +1962,18 @@
       return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
     }).length;
     const openActions = meetings.flatMap(meeting => normalizeMeetingActions(meeting.actionItems)).filter(item => !item.completed).length;
-    els.meetingSummary.innerHTML = `<span><strong>${meetings.length}</strong> 전체</span><span><strong>${thisMonth}</strong> 이번 달</span><span><strong>${openActions}</strong> 미완료 후속 업무</span>`;
+    els.meetingSummary.innerHTML = `<span><strong>${meetings.length}${meetingHasMore ? '+' : ''}</strong> 최근 기록</span><span><strong>${thisMonth}</strong> 현재 목록의 이번 달</span><span><strong>${openActions}</strong> 현재 목록 후속 업무</span>`;
 
     if (!filtered.length) {
-      els.meetingList.innerHTML = `<div class="meeting-empty"><div class="meeting-empty-icon">✦</div><strong>등록된 회의록이 없습니다.</strong><span>오른쪽 위 ‘새 회의록’에서 첫 기록을 남겨보세요.</span></div>`;
+      const query = els.globalSearch.value.trim();
+      els.meetingList.innerHTML = `<div class="meeting-empty"><div class="meeting-empty-icon">✦</div><strong>${query ? '현재 불러온 기록에서 검색 결과가 없습니다.' : '등록된 회의록이 없습니다.'}</strong><span>${meetingHasMore ? '이전 회의록을 더 불러오면 과거 기록까지 검색할 수 있습니다.' : '오른쪽 위 ‘새 회의록’에서 첫 기록을 남겨보세요.'}</span></div>`;
+      if (meetingHasMore) {
+        els.meetingList.insertAdjacentHTML('beforeend', `<button type="button" class="meeting-load-more" data-load-more-meetings ${meetingLoading ? 'disabled' : ''}>${meetingLoading ? '불러오는 중…' : '이전 회의록 더 보기'} <span>30개씩</span></button>`);
+      }
       return;
     }
 
-    const visibleMeetings = filtered.slice(0, meetingVisibleCount);
+    const visibleMeetings = filtered;
     els.meetingList.innerHTML = visibleMeetings.map(meeting => {
       const expanded = expandedMeetingIds.has(meeting.id);
       const stats = meetingActionStats(meeting);
@@ -1787,8 +2007,11 @@
         ${detail}
       </article>`;
     }).join('');
-    if (filtered.length > visibleMeetings.length) {
-      els.meetingList.insertAdjacentHTML('beforeend', `<button type="button" class="meeting-load-more" data-load-more-meetings>이전 회의록 더 보기 <span>${filtered.length - visibleMeetings.length}개 남음</span></button>`);
+    if (meetingHasMore) {
+      els.meetingList.insertAdjacentHTML(
+        'beforeend',
+        `<button type="button" class="meeting-load-more" data-load-more-meetings ${meetingLoading ? 'disabled' : ''}>${meetingLoading ? '불러오는 중…' : '이전 회의록 더 보기'} <span>30개씩</span></button>`
+      );
     }
   }
 
@@ -1939,6 +2162,7 @@
     } else if (view === 'meetings') {
       $('#meetingView').classList.add('active');
       els.pageTitle.textContent = '회의록';
+      loadInitialMeetings();
     } else if (view === 'admin') {
       $('#adminView').classList.add('active');
       els.pageTitle.textContent = 'TEAM FLOW 관리';
@@ -2234,7 +2458,6 @@
     });
     [els.assigneeFilter, els.statusFilter].forEach(element => element.addEventListener('change', renderAll));
     els.globalSearch.addEventListener('input', () => {
-      if (activeView === 'meetings') meetingVisibleCount = 30;
       renderAll();
     });
     $$('#periodSegment button').forEach(button => button.addEventListener('click', () => {
@@ -2267,10 +2490,9 @@
       textarea.closest('form')?.requestSubmit();
     });
     document.addEventListener('click', event => {
-      const loadMoreMeetings = event.target.closest('[data-load-more-meetings]');
-      if (loadMoreMeetings) {
-        meetingVisibleCount += 30;
-        renderMeetingList();
+      const loadMoreMeetingsButton = event.target.closest('[data-load-more-meetings]');
+      if (loadMoreMeetingsButton) {
+        loadMoreMeetings();
         return;
       }
       const adminSelectTeam = event.target.closest('[data-admin-select-team]');
@@ -2333,8 +2555,14 @@
         event.preventDefault();
         event.stopPropagation();
         const id = toggle.dataset.toggleSubtasks;
-        if (expandedTaskIds.has(id)) expandedTaskIds.delete(id); else expandedTaskIds.add(id);
-        renderTaskList();
+        if (expandedTaskIds.has(id)) {
+          expandedTaskIds.delete(id);
+          renderTaskList();
+        } else {
+          expandedTaskIds.add(id);
+          renderTaskList();
+          loadCommentsForTask(id);
+        }
         return;
       }
       const checklist = event.target.closest('[data-subtask-check]');
@@ -2418,7 +2646,9 @@
       activeTeamId = '';
       localStorage.removeItem(ACTIVE_TEAM_KEY);
       currentUser = '';
-      meetingVisibleCount = 30;
+      meetingNextCursor = 0;
+      meetingHasMore = false;
+      meetingsInitialized = false;
       loadRemoteData();
     });
     els.openTeamShortcutModalBtn?.addEventListener('click', openTeamShortcutModal);
