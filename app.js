@@ -2040,12 +2040,12 @@
     display: inline-flex; align-items: center; justify-content: center;
     background: #f3f4f6; color: #3b414a; font-size: 11pt; flex: 0 0 auto;
   }
-  .minutes-section { margin-top: 9mm; break-inside: avoid; }
-  .section-head { display: flex; align-items: center; gap: 4mm; margin-bottom: 4mm; }
+  .minutes-section { margin-top: 7mm; break-inside: auto; page-break-inside: auto; }
+  .section-head { display: flex; align-items: center; gap: 4mm; margin-bottom: 3mm; break-after: avoid; page-break-after: avoid; }
   .section-head i { width: 1.2mm; height: 11mm; border-radius: 999px; background: #2f6bff; flex: 0 0 auto; }
   .section-head h2 { margin: 0; font-size: 16pt; line-height: 1.2; letter-spacing: -.035em; font-weight: 760; }
-  .section-body { padding-left: 5.2mm; white-space: normal; color: #282d34; }
-  .action-section { margin-top: 9mm; break-inside: avoid; }
+  .section-body { padding-left: 5.2mm; white-space: normal; color: #282d34; orphans: 3; widows: 3; }
+  .action-section { margin-top: 7mm; break-inside: auto; page-break-inside: auto; }
   table {
     width: 100%; border-collapse: separate; border-spacing: 0;
     border: 1px solid #dfe3e8; border-radius: 13px; overflow: hidden;
@@ -2090,7 +2090,7 @@
 <body>
 <button class="no-print" onclick="window.print()">PDF 저장 / 인쇄</button>
 <div class="page">
-  <div class="brandline"><strong>MEKICS</strong><span>Meeting Minutes</span></div>
+  <div class="brandline"><strong>MEKICS</strong><span>· MEETING MINUTES</span></div>
   <h1 class="meeting-title">${escapeHTML(meeting.title)}</h1>
 
   <div class="meta-card">
