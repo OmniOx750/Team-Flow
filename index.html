@@ -116,6 +116,11 @@
             <option value="hold">보류</option>
             <option value="delayed">지연</option>
           </select>
+          <select id="projectTypeFilter" aria-label="프로젝트 구분 필터">
+            <option value="all">장·단기 전체</option>
+            <option value="long">장기 프로젝트</option>
+            <option value="short">단기 프로젝트</option>
+          </select>
         </div>
       </section>
 
@@ -354,6 +359,13 @@
             </div>
             <select id="taskProject" required></select>
           </div>
+          <label>
+            <span>프로젝트 구분 *</span>
+            <select id="taskProjectType" required>
+              <option value="short">단기 프로젝트</option>
+              <option value="long">장기 프로젝트</option>
+            </select>
+          </label>
           <label>
             <span>담당자 *</span>
             <select id="taskAssignee" required></select>

@@ -1778,3 +1778,14 @@ select, input, textarea { border: 1px solid var(--line); border-radius: 11px; ba
   .shortcut-manager-icon { width: 34px; height: 34px; }
   .shortcut-manager-actions { grid-column: 2; justify-content: flex-start; }
 }
+
+/* v2.5 - project duration type */
+.badge.project-type-long { background: #eee9ff; color: #684ac5; }
+.badge.project-type-short { background: #eef1f5; color: #626b78; }
+.meeting-card-actions { display: flex; gap: 6px; }
+.meeting-card-actions .meeting-pdf-button { color: #2f6bff; background: #eef3ff; }
+.meeting-card-actions .meeting-pdf-button:hover { background: #e3ebff; color: #2057db; }
+@media (max-width: 760px) {
+  .filter-controls { flex-wrap: wrap; }
+  .filter-controls select { flex: 1 1 120px; min-width: 0; }
+}

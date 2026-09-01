@@ -14,7 +14,7 @@
     delayed: { label: '지연', color: '#e14a55' }
   };
   const PRIORITY = { low: '낮음', normal: '보통', high: '높음', urgent: '긴급' };
-  const REQUIRED_API_VERSION = '2.4.0';
+  const REQUIRED_API_VERSION = '2.5.0';
   const DEFAULT_AVATAR_COLOR = '#2f6bff';
   const AVATAR_PALETTE = ['#2f6bff', '#5b8def', '#7c5cff', '#ff5c7c', '#ef6c00', '#16a34a', '#10b981', '#0ea5e9', '#8b5cf6', '#ec4899', '#f59e0b', '#6b7280'];
 
@@ -43,12 +43,14 @@
     weekRangeLabel: $('#weekRangeLabel'),
     assigneeFilter: $('#assigneeFilter'),
     statusFilter: $('#statusFilter'),
+    projectTypeFilter: $('#projectTypeFilter'),
     globalSearch: $('#globalSearch'),
     taskModal: $('#taskModal'),
     taskForm: $('#taskForm'),
     taskId: $('#taskId'),
     taskTitle: $('#taskTitle'),
     taskProject: $('#taskProject'),
+    taskProjectType: $('#taskProjectType'),
     taskAssignee: $('#taskAssignee'),
     taskStart: $('#taskStart'),
     taskEnd: $('#taskEnd'),
@@ -262,6 +264,7 @@
       id: String(task.id || ''),
       title: String(task.title || ''),
       project: String(task.project || '기타'),
+      projectType: ['long', 'short'].includes(String(task.projectType || '')) ? String(task.projectType) : 'short',
       assignee: String(task.assignee || ''),
       start: String(task.start || iso(new Date())).slice(0, 10),
       end: String(task.end || iso(new Date())).slice(0, 10),
@@ -455,6 +458,10 @@
   function statusBadge(task) { const st = actualStatus(task); return `<span class="badge ${st}">${STATUS[st].label}</span>`; }
   function priorityBadge(task) { return ['urgent', 'high'].includes(task.priority) ? `<span class="badge priority-${task.priority}">${PRIORITY[task.priority]}</span>` : ''; }
   function decisionBadge(task) { return task.needsDecision ? '<span class="badge decision">결정 필요</span>' : ''; }
+  function projectTypeBadge(task) {
+    const type = task?.projectType === 'long' ? 'long' : 'short';
+    return `<span class="badge project-type-${type}">${type === 'long' ? '장기' : '단기'}</span>`;
+  }
 
   function startOfNextWeek(reference = new Date()) { return addDays(startOfWeek(reference), 7); }
   function endOfNextWeek(reference = new Date()) { return addDays(startOfWeek(reference), 13); }
@@ -527,6 +534,7 @@
     els.weeklyMeetingTaskList.innerHTML = items.length ? items.map(task => {
       const next = nextSubtask(task);
       const badges = [
+        projectTypeBadge(task),
         statusBadge(task),
         priorityBadge(task),
         task.needsDecision ? '<span class="badge decision">결정 필요</span>' : '',
@@ -546,6 +554,7 @@
               </span>
               <div class="meeting-task-meta">
                 <span>${escapeHTML(task.project)}</span>
+                <span>${task.projectType === 'long' ? '장기 프로젝트' : '단기 프로젝트'}</span>
                 <span>${formatShort(task.start)} ~ ${formatShort(task.end)}</span>
                 <span>${task.progress}%</span>
               </div>
@@ -752,6 +761,7 @@
     if (!saved) return false;
     return saved.title === payload.title
       && saved.project === payload.project
+      && saved.projectType === (payload.projectType === 'long' ? 'long' : 'short')
       && saved.assignee === payload.assignee
       && saved.start === payload.start
       && saved.end === payload.end
@@ -1172,6 +1182,7 @@
     const query = els.globalSearch.value.trim().toLowerCase();
     const assignee = els.assigneeFilter.value;
     const status = els.statusFilter.value;
+    const projectType = els.projectTypeFilter?.value || 'all';
     const today = dateOnly(iso(new Date()));
     let start;
     let end;
@@ -1183,6 +1194,7 @@
       if (!ignorePeriod && period !== 'all' && !overlaps(task, start, end)) return false;
       if (assignee !== 'all' && task.assignee !== assignee) return false;
       if (status !== 'all' && actualStatus(task) !== status) return false;
+      if (projectType !== 'all' && task.projectType !== projectType) return false;
       const subtaskText = normalizeSubtasks(task.subtasks).map(item => item.title).join(' ');
       const commentText = commentsForTask(task.id).map(comment => `${comment.author} ${comment.content}`).join(' ');
       if (query && ![task.title, task.project, task.assignee, task.description, subtaskText, commentText].some(value => (value || '').toLowerCase().includes(query))) return false;
@@ -1735,7 +1747,7 @@
   function renderTimeline() {
     const weekStart = startOfWeek(new Date());
     const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
-    const visible = tasks.filter(task => overlaps(task, weekStart, addDays(weekStart, 6))).sort((a, b) => dateOnly(a.start) - dateOnly(b.start)).slice(0, 9);
+    const visible = getFilteredTasks({ ignorePeriod: true }).filter(task => overlaps(task, weekStart, addDays(weekStart, 6))).sort((a, b) => dateOnly(a.start) - dateOnly(b.start)).slice(0, 9);
     let html = '<div class="timeline"><div class="timeline-head">업무 / 담당자</div>';
     html += days.map(day => `<div class="timeline-head ${isSameDay(day, new Date()) ? 'today' : ''}">${['월', '화', '수', '목', '금', '토', '일'][(day.getDay() + 6) % 7]} ${day.getMonth() + 1}/${day.getDate()}</div>`).join('');
     visible.forEach(task => {
@@ -1758,7 +1770,8 @@
     const names = memberNames();
     const selected = els.assigneeFilter?.value || 'all';
     els.teamStatusBody.innerHTML = names.length ? names.map(name => {
-      const mine = tasks.filter(task => task.assignee === name);
+      const projectType = els.projectTypeFilter?.value || 'all';
+      const mine = tasks.filter(task => task.assignee === name && (projectType === 'all' || task.projectType === projectType));
       const open = mine.filter(task => task.status !== 'completed');
       const progress = open.filter(task => task.status === 'progress').length;
       const due = open.filter(task => between(task.end, weekStart, weekEnd)).length;
@@ -1826,7 +1839,7 @@
         <td class="task-title-cell">
           <div class="task-title-wrap">
             <button type="button" class="subtask-toggle ${expanded ? 'open' : ''}" data-toggle-subtasks="${escapeHTML(task.id)}" aria-expanded="${expanded}" aria-label="업무 상세 ${expanded ? '접기' : '펼치기'}">${expanded ? '−' : '+'}</button>
-            <div><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} ${priorityBadge(task)}${decisionBadge(task)}${detailsMeta ? ` · ${detailsMeta}` : ''}</span></div>
+            <div><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.project)} ${projectTypeBadge(task)} ${priorityBadge(task)}${decisionBadge(task)}${detailsMeta ? ` · ${detailsMeta}` : ''}</span></div>
           </div>
         </td>
         <td><button type="button" class="assignee-chip" data-member-filter="${escapeHTML(task.assignee)}" aria-label="${escapeHTML(task.assignee)} 담당 업무만 보기">${avatarMarkup(task.assignee)}<div><span>담당자</span><strong>${escapeHTML(task.assignee)}</strong>${memberInfo(task.assignee).position ? `<small>${escapeHTML(memberInfo(task.assignee).position)}</small>` : ''}</div></button></td>
@@ -1902,7 +1915,7 @@
       const items = filtered.filter(task => actualStatus(task) === status || (status === 'progress' && actualStatus(task) === 'delayed'));
       return `<section class="board-column"><div class="board-title">${STATUS[status].label}<span>${items.length}</span></div>${items.map(task => `
         <article class="task-card" data-open-task="${escapeHTML(task.id)}">
-          <div class="task-card-top">${statusBadge(task)}${priorityBadge(task)}${decisionBadge(task)}</div>
+          <div class="task-card-top">${projectTypeBadge(task)}${statusBadge(task)}${priorityBadge(task)}${decisionBadge(task)}</div>
           <h3>${escapeHTML(task.title)}</h3><p>${escapeHTML(task.project)} · ${escapeHTML(task.assignee)}</p>
           ${subtaskStats(task).total ? `<div class="task-card-checklist">✓ ${subtaskStats(task).completed}/${subtaskStats(task).total} 세부 일정 완료</div>` : ''}
           ${commentLoadedTaskIds.has(task.id) && commentsForTask(task.id).length ? `<div class="task-card-comments">댓글 ${commentsForTask(task.id).length}</div>` : ''}
@@ -1919,7 +1932,7 @@
       const dayTasks = tasks.filter(task => day >= dateOnly(task.start) && day <= dateOnly(task.end)).sort((a, b) => dateOnly(a.end) - dateOnly(b.end));
       return `<section class="calendar-day ${isSameDay(day, new Date()) ? 'today' : ''}">
         <div class="calendar-date"><strong>${['일', '월', '화', '수', '목', '금', '토'][day.getDay()]} ${day.getDate()}</strong><span>${dayTasks.length}개</span></div>
-        ${dayTasks.map(task => `<article class="calendar-task ${actualStatus(task)}" data-open-task="${escapeHTML(task.id)}"><strong>${escapeHTML(task.title)}</strong><span>${escapeHTML(task.assignee)} · ${task.progress}%</span></article>`).join('')}
+        ${dayTasks.map(task => `<article class="calendar-task ${actualStatus(task)}" data-open-task="${escapeHTML(task.id)}"><strong>${escapeHTML(task.title)}</strong><span>${task.projectType === 'long' ? '장기' : '단기'} · ${escapeHTML(task.assignee)} · ${task.progress}%</span></article>`).join('')}
       </section>`;
     }).join('');
   }
@@ -1944,6 +1957,33 @@
       return [meeting.title, meeting.project, meeting.location, meeting.recorder, meeting.attendees.join(' '), meeting.agenda, meeting.discussion, meeting.decisions, actionText]
         .some(value => String(value || '').toLowerCase().includes(query));
     }).sort((a, b) => `${b.date} ${b.startTime}`.localeCompare(`${a.date} ${a.startTime}`));
+  }
+
+  function safeFileName(value) {
+    return String(value || '회의록').replace(/[\\/:*?\"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80) || '회의록';
+  }
+
+  function meetingPdfHtml(meeting) {
+    const actions = normalizeMeetingActions(meeting.actionItems);
+    const time = meetingTimeLabel(meeting);
+    const generated = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
+    const section = (title, body) => body ? `<section><h2>${escapeHTML(title)}</h2><div class="body-text">${escapeHTML(body).replace(/\n/g, '<br>')}</div></section>` : '';
+    const actionRows = actions.length ? actions.map(item => `<tr><td>${escapeHTML(item.title)}</td><td>${escapeHTML(item.owner || '담당자 미정')}</td><td>${escapeHTML(item.dueDate || '-')}</td><td>${item.completed ? '완료' : '진행'}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">등록된 후속 업무가 없습니다.</td></tr>';
+    return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHTML(meeting.title)}</title><style>
+      @page{size:A4;margin:16mm 15mm}*{box-sizing:border-box}body{font-family:Pretendard,-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif;color:#1b1f27;margin:0;font-size:11pt;line-height:1.65}header{border-bottom:2px solid #1b1f27;padding-bottom:16px;margin-bottom:20px}.kicker{font-size:8.5pt;letter-spacing:.14em;color:#7b828d;font-weight:800}.title{font-size:22pt;letter-spacing:-.04em;margin:4px 0 0}.meta{display:grid;grid-template-columns:110px 1fr;border-top:1px solid #dfe2e8;margin-top:14px}.meta dt,.meta dd{margin:0;padding:7px 8px;border-bottom:1px solid #e7e9ee}.meta dt{color:#777e89;font-weight:700;background:#f7f8fa}.meta dd{font-weight:600}section{margin-top:22px;break-inside:avoid}h2{font-size:12pt;margin:0 0 8px;border-left:3px solid #2f6bff;padding-left:8px}.body-text{white-space:normal}table{width:100%;border-collapse:collapse;margin-top:8px;font-size:9.5pt}th,td{border:1px solid #dfe2e8;padding:7px 8px;text-align:left;vertical-align:top}th{background:#f6f7f9;color:#5d6470}.empty{text-align:center;color:#8a909a}footer{margin-top:26px;padding-top:10px;border-top:1px solid #e7e9ee;color:#9298a2;font-size:8.5pt;display:flex;justify-content:space-between}.no-print{position:fixed;right:18px;top:18px;border:0;border-radius:10px;padding:10px 14px;background:#1a2232;color:white;font-weight:700;cursor:pointer}@media print{.no-print{display:none}}
+    </style></head><body><button class="no-print" onclick="window.print()">PDF 저장 / 인쇄</button><header><div class="kicker">TEAM FLOW · MEETING MINUTES</div><h1 class="title">${escapeHTML(meeting.title)}</h1><dl class="meta"><dt>일시</dt><dd>${escapeHTML(formatMeetingDate(meeting.date))}${time ? ` · ${escapeHTML(time)}` : ''}</dd><dt>장소·방식</dt><dd>${escapeHTML(meeting.location || '-')}</dd><dt>관련 프로젝트</dt><dd>${escapeHTML(meeting.project || '-')}</dd><dt>작성자</dt><dd>${escapeHTML(meeting.recorder || '-')}</dd><dt>참석자</dt><dd>${escapeHTML(meeting.attendees.join(', ') || '-')}</dd></dl></header>${section('안건', meeting.agenda)}${section('논의 내용', meeting.discussion)}${section('결정 사항', meeting.decisions)}<section><h2>후속 업무</h2><table><thead><tr><th>후속 업무</th><th>담당자</th><th>기한</th><th>상태</th></tr></thead><tbody>${actionRows}</tbody></table></section><footer><span>TEAM FLOW</span><span>Generated ${escapeHTML(generated)}</span></footer><script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`;
+  }
+
+  function exportMeetingPdf(meetingId) {
+    const meeting = meetings.find(item => item.id === meetingId);
+    if (!meeting) return showToast('회의록을 찾지 못했습니다.');
+    const popup = window.open('', '_blank', 'width=900,height=1000');
+    if (!popup) return showToast('PDF 창이 차단되었습니다. 팝업을 허용해 주세요.');
+    try { popup.opener = null; } catch (error) {}
+    popup.document.open();
+    popup.document.write(meetingPdfHtml(meeting));
+    popup.document.close();
+    popup.document.title = `${meeting.date}_${safeFileName(meeting.title)}`;
   }
 
   function renderMeetingList() {
@@ -2003,7 +2043,7 @@
           </div>
           <span class="meeting-expand-icon">${expanded ? '−' : '+'}</span>
         </button>
-        <div class="meeting-card-actions"><button type="button" data-edit-meeting="${escapeHTML(meeting.id)}">수정</button></div>
+        <div class="meeting-card-actions"><button type="button" class="meeting-pdf-button" data-pdf-meeting="${escapeHTML(meeting.id)}">PDF</button><button type="button" data-edit-meeting="${escapeHTML(meeting.id)}">수정</button></div>
         ${detail}
       </article>`;
     }).join('');
@@ -2192,6 +2232,7 @@
     const selectedProject = task?.project || activeProjectCategories()[0]?.name || '';
     populateProjectSelectors({ taskValue: selectedProject });
     els.taskProject.value = selectedProject;
+    if (els.taskProjectType) els.taskProjectType.value = task?.projectType === 'long' ? 'long' : 'short';
     els.taskAssignee.value = task?.assignee || currentUser;
     els.taskStart.value = task?.start || iso(new Date());
     els.taskEnd.value = task?.end || iso(addDays(new Date(), 1));
@@ -2231,6 +2272,7 @@
       id: els.taskId.value || `T${Date.now()}${Math.random().toString(16).slice(2, 8)}`,
       title: els.taskTitle.value.trim(),
       project: els.taskProject.value.trim(),
+      projectType: els.taskProjectType?.value === 'long' ? 'long' : 'short',
       assignee: els.taskAssignee.value,
       start: els.taskStart.value,
       end: els.taskEnd.value,
@@ -2456,7 +2498,7 @@
         els.progressValue.textContent = '100%';
       }
     });
-    [els.assigneeFilter, els.statusFilter].forEach(element => element.addEventListener('change', renderAll));
+    [els.assigneeFilter, els.statusFilter, els.projectTypeFilter].filter(Boolean).forEach(element => element.addEventListener('change', renderAll));
     els.globalSearch.addEventListener('input', () => {
       renderAll();
     });
@@ -2578,6 +2620,13 @@
         event.preventDefault();
         event.stopPropagation();
         toggleMeetingAction(meetingActionToggle.dataset.meetingActionToggle, meetingActionToggle.dataset.meetingActionId, meetingActionToggle.dataset.meetingActionCompleted !== 'true');
+        return;
+      }
+      const pdfMeetingButton = event.target.closest('[data-pdf-meeting]');
+      if (pdfMeetingButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        exportMeetingPdf(pdfMeetingButton.dataset.pdfMeeting);
         return;
       }
       const editMeetingButton = event.target.closest('[data-edit-meeting]');
