@@ -1989,7 +1989,7 @@
   function renderMeetingList() {
     if (!els.meetingList) return;
     if (!meetingsInitialized) {
-      els.meetingSummary.innerHTML = '<span><strong>—</strong> 최근 기록</span><span><strong>—</strong> 이번 달</span><span><strong>—</strong> 미완료 후속 업무</span>';
+      els.meetingSummary.innerHTML = '<span><strong>—</strong><em>최근 기록</em></span><span><strong>—</strong><em>이번 달</em></span><span><strong>—</strong><em>미완료 후속 업무</em></span>';
       els.meetingList.innerHTML = meetingLoading
         ? '<div class="meeting-empty"><div class="meeting-empty-icon">↻</div><strong>최근 회의록을 불러오는 중입니다.</strong><span>회의록 메뉴를 열었을 때만 필요한 기록을 가져옵니다.</span></div>'
         : '<div class="meeting-empty"><div class="meeting-empty-icon">✦</div><strong>회의록을 필요한 순간에만 불러옵니다.</strong><span>잠시 후 최근 기록이 표시됩니다.</span></div>';
@@ -2002,7 +2002,7 @@
       return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
     }).length;
     const openActions = meetings.flatMap(meeting => normalizeMeetingActions(meeting.actionItems)).filter(item => !item.completed).length;
-    els.meetingSummary.innerHTML = `<span><strong>${meetings.length}${meetingHasMore ? '+' : ''}</strong> 최근 기록</span><span><strong>${thisMonth}</strong> 현재 목록의 이번 달</span><span><strong>${openActions}</strong> 현재 목록 후속 업무</span>`;
+    els.meetingSummary.innerHTML = `<span><strong>${meetings.length}${meetingHasMore ? '+' : ''}</strong><em>최근 기록</em></span><span><strong>${thisMonth}</strong><em>이번 달</em></span><span><strong>${openActions}</strong><em>미완료 후속 업무</em></span>`;
 
     if (!filtered.length) {
       const query = els.globalSearch.value.trim();
@@ -2041,9 +2041,12 @@
             <p>${formatMeetingDate(meeting.date)}${time ? ` · ${escapeHTML(time)}` : ''}${meeting.location ? ` · ${escapeHTML(meeting.location)}` : ''}</p>
             <div class="meeting-card-bottom"><div class="meeting-attendees">${attendeePreview}${moreCount ? `<b>+${moreCount}</b>` : ''}<span>${meeting.attendees.length}명 참석</span></div>${stats.total ? `<div class="meeting-action-badge">후속 업무 ${stats.completed}/${stats.total}</div>` : ''}</div>
           </div>
-          <span class="meeting-expand-icon">${expanded ? '−' : '+'}</span>
         </button>
-        <div class="meeting-card-actions"><button type="button" class="meeting-pdf-button" data-pdf-meeting="${escapeHTML(meeting.id)}">PDF</button><button type="button" data-edit-meeting="${escapeHTML(meeting.id)}">수정</button></div>
+        <div class="meeting-card-actions">
+          <button type="button" class="meeting-pdf-button" data-pdf-meeting="${escapeHTML(meeting.id)}"><span>↓</span> PDF 저장</button>
+          <button type="button" class="meeting-edit-button" data-edit-meeting="${escapeHTML(meeting.id)}">수정</button>
+          <button type="button" class="meeting-detail-button" data-toggle-meeting="${escapeHTML(meeting.id)}" aria-expanded="${expanded}">${expanded ? '접기 ↑' : '상세 보기 ↓'}</button>
+        </div>
         ${detail}
       </article>`;
     }).join('');
