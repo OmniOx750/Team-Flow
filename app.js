@@ -1967,11 +1967,157 @@
     const actions = normalizeMeetingActions(meeting.actionItems);
     const time = meetingTimeLabel(meeting);
     const generated = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
-    const section = (title, body) => body ? `<section><h2>${escapeHTML(title)}</h2><div class="body-text">${escapeHTML(body).replace(/\n/g, '<br>')}</div></section>` : '';
-    const actionRows = actions.length ? actions.map(item => `<tr><td>${escapeHTML(item.title)}</td><td>${escapeHTML(item.owner || '담당자 미정')}</td><td>${escapeHTML(item.dueDate || '-')}</td><td>${item.completed ? '완료' : '진행'}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">등록된 후속 업무가 없습니다.</td></tr>';
-    return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHTML(meeting.title)}</title><style>
-      @page{size:A4;margin:16mm 15mm}*{box-sizing:border-box}body{font-family:Pretendard,-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif;color:#1b1f27;margin:0;font-size:11pt;line-height:1.65}header{border-bottom:2px solid #1b1f27;padding-bottom:16px;margin-bottom:20px}.kicker{font-size:8.5pt;letter-spacing:.14em;color:#7b828d;font-weight:800}.title{font-size:22pt;letter-spacing:-.04em;margin:4px 0 0}.meta{display:grid;grid-template-columns:110px 1fr;border-top:1px solid #dfe2e8;margin-top:14px}.meta dt,.meta dd{margin:0;padding:7px 8px;border-bottom:1px solid #e7e9ee}.meta dt{color:#777e89;font-weight:700;background:#f7f8fa}.meta dd{font-weight:600}section{margin-top:22px;break-inside:avoid}h2{font-size:12pt;margin:0 0 8px;border-left:3px solid #2f6bff;padding-left:8px}.body-text{white-space:normal}table{width:100%;border-collapse:collapse;margin-top:8px;font-size:9.5pt}th,td{border:1px solid #dfe2e8;padding:7px 8px;text-align:left;vertical-align:top}th{background:#f6f7f9;color:#5d6470}.empty{text-align:center;color:#8a909a}footer{margin-top:26px;padding-top:10px;border-top:1px solid #e7e9ee;color:#9298a2;font-size:8.5pt;display:flex;justify-content:space-between}.no-print{position:fixed;right:18px;top:18px;border:0;border-radius:10px;padding:10px 14px;background:#1a2232;color:white;font-weight:700;cursor:pointer}@media print{.no-print{display:none}}
-    </style></head><body><button class="no-print" onclick="window.print()">PDF 저장 / 인쇄</button><header><div class="kicker">TEAM FLOW · MEETING MINUTES</div><h1 class="title">${escapeHTML(meeting.title)}</h1><dl class="meta"><dt>일시</dt><dd>${escapeHTML(formatMeetingDate(meeting.date))}${time ? ` · ${escapeHTML(time)}` : ''}</dd><dt>장소·방식</dt><dd>${escapeHTML(meeting.location || '-')}</dd><dt>관련 프로젝트</dt><dd>${escapeHTML(meeting.project || '-')}</dd><dt>작성자</dt><dd>${escapeHTML(meeting.recorder || '-')}</dd><dt>참석자</dt><dd>${escapeHTML(meeting.attendees.join(', ') || '-')}</dd></dl></header>${section('안건', meeting.agenda)}${section('논의 내용', meeting.discussion)}${section('결정 사항', meeting.decisions)}<section><h2>후속 업무</h2><table><thead><tr><th>후속 업무</th><th>담당자</th><th>기한</th><th>상태</th></tr></thead><tbody>${actionRows}</tbody></table></section><footer><span>TEAM FLOW</span><span>Generated ${escapeHTML(generated)}</span></footer><script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`;
+    const section = (title, body) => body ? `
+      <section class="minutes-section">
+        <div class="section-head"><i></i><h2>${escapeHTML(title)}</h2></div>
+        <div class="section-body">${escapeHTML(body).replace(/\n/g, '<br>')}</div>
+      </section>` : '';
+    const actionRows = actions.length ? actions.map(item => `
+      <tr>
+        <td>${escapeHTML(item.title)}</td>
+        <td>${escapeHTML(item.owner || '담당자 미정')}</td>
+        <td>${escapeHTML(item.dueDate || '-')}</td>
+        <td><span class="status-pill ${item.completed ? 'done' : 'progress'}">${item.completed ? '완료' : '진행'}</span></td>
+      </tr>`).join('') : '<tr><td colspan="4" class="empty">등록된 후속 업무가 없습니다.</td></tr>';
+
+    return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>${escapeHTML(meeting.title)}</title>
+<style>
+  @page { size: A4; margin: 15mm 16mm 14mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body {
+    font-family: Pretendard, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Malgun Gothic", sans-serif;
+    color: #17191d;
+    font-size: 10.5pt;
+    line-height: 1.62;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .page { width: 100%; max-width: 180mm; margin: 0 auto; }
+  .brandline {
+    display: flex; align-items: baseline; gap: 6px;
+    padding: 1mm 0 7mm;
+    border-bottom: 1px solid #d9dde4;
+    letter-spacing: -.01em;
+  }
+  .brandline strong { font-size: 15pt; font-weight: 800; color: #121418; }
+  .brandline span { font-size: 15pt; font-weight: 450; color: #626873; }
+  .meeting-title {
+    margin: 11mm 0 8mm;
+    font-size: 28pt;
+    line-height: 1.18;
+    letter-spacing: -.055em;
+    font-weight: 780;
+  }
+  .meta-card {
+    border: 1px solid #e0e3e8;
+    border-radius: 15px;
+    overflow: hidden;
+    margin-bottom: 11mm;
+  }
+  .meta-row {
+    display: grid;
+    grid-template-columns: 43mm 1fr;
+    min-height: 13mm;
+    border-bottom: 1px solid #e7e9ed;
+  }
+  .meta-row:last-child { border-bottom: 0; }
+  .meta-label, .meta-value { display: flex; align-items: center; }
+  .meta-label {
+    gap: 10px;
+    padding: 3mm 5mm;
+    font-weight: 700;
+    color: #383d45;
+    border-right: 1px solid #e7e9ed;
+  }
+  .meta-value { padding: 3mm 6mm; font-weight: 530; color: #1f2329; }
+  .meta-icon {
+    width: 8mm; height: 8mm; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: #f3f4f6; color: #3b414a; font-size: 11pt; flex: 0 0 auto;
+  }
+  .minutes-section { margin-top: 9mm; break-inside: avoid; }
+  .section-head { display: flex; align-items: center; gap: 4mm; margin-bottom: 4mm; }
+  .section-head i { width: 1.2mm; height: 11mm; border-radius: 999px; background: #2f6bff; flex: 0 0 auto; }
+  .section-head h2 { margin: 0; font-size: 16pt; line-height: 1.2; letter-spacing: -.035em; font-weight: 760; }
+  .section-body { padding-left: 5.2mm; white-space: normal; color: #282d34; }
+  .action-section { margin-top: 9mm; break-inside: avoid; }
+  table {
+    width: 100%; border-collapse: separate; border-spacing: 0;
+    border: 1px solid #dfe3e8; border-radius: 13px; overflow: hidden;
+    margin-top: 4mm; font-size: 9.7pt;
+  }
+  th, td { padding: 3.6mm 4mm; text-align: left; vertical-align: middle; border-right: 1px solid #e3e6ea; border-bottom: 1px solid #e3e6ea; }
+  th:last-child, td:last-child { border-right: 0; }
+  tbody tr:last-child td { border-bottom: 0; }
+  th { background: #f7f8fa; color: #3d434c; font-weight: 700; }
+  th:nth-child(1) { width: 44%; }
+  th:nth-child(2) { width: 18%; }
+  th:nth-child(3) { width: 22%; }
+  th:nth-child(4) { width: 16%; text-align: center; }
+  td:last-child { text-align: center; }
+  .status-pill {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18mm; padding: 1.4mm 3mm; border-radius: 999px;
+    font-size: 8.8pt; font-weight: 750;
+  }
+  .status-pill.progress { background: #edf3ff; color: #2f6bff; }
+  .status-pill.done { background: #eaf7f0; color: #21855c; }
+  .empty { text-align: center; color: #8b919a; padding: 6mm 3mm; }
+  footer {
+    margin-top: 12mm; padding-top: 5mm;
+    border-top: 1px solid #dfe2e7;
+    display: flex; align-items: center; justify-content: space-between;
+    color: #727985; font-size: 8.6pt;
+  }
+  footer strong { color: #17191d; font-size: 11.5pt; font-weight: 800; letter-spacing: -.015em; }
+  .no-print {
+    position: fixed; right: 18px; top: 18px; z-index: 10;
+    border: 0; border-radius: 12px; padding: 10px 15px;
+    background: #17191d; color: #fff; font-weight: 700; cursor: pointer;
+    box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  }
+  @media print {
+    .no-print { display: none !important; }
+    .page { max-width: none; }
+  }
+</style>
+</head>
+<body>
+<button class="no-print" onclick="window.print()">PDF 저장 / 인쇄</button>
+<div class="page">
+  <div class="brandline"><strong>MEKICS</strong><span>Meeting Minutes</span></div>
+  <h1 class="meeting-title">${escapeHTML(meeting.title)}</h1>
+
+  <div class="meta-card">
+    <div class="meta-row"><div class="meta-label"><span class="meta-icon">◷</span>일시</div><div class="meta-value">${escapeHTML(formatMeetingDate(meeting.date))}${time ? ` · ${escapeHTML(time)}` : ''}</div></div>
+    <div class="meta-row"><div class="meta-label"><span class="meta-icon">⌖</span>장소·방식</div><div class="meta-value">${escapeHTML(meeting.location || '-')}</div></div>
+    <div class="meta-row"><div class="meta-label"><span class="meta-icon">□</span>관련 프로젝트</div><div class="meta-value">${escapeHTML(meeting.project || '-')}</div></div>
+    <div class="meta-row"><div class="meta-label"><span class="meta-icon">○</span>작성자</div><div class="meta-value">${escapeHTML(meeting.recorder || '-')}</div></div>
+    <div class="meta-row"><div class="meta-label"><span class="meta-icon">◎</span>참석자</div><div class="meta-value">${escapeHTML(meeting.attendees.join(', ') || '-')}</div></div>
+  </div>
+
+  ${section('안건', meeting.agenda)}
+  ${section('논의 내용', meeting.discussion)}
+  ${section('결정 사항', meeting.decisions)}
+
+  <section class="action-section">
+    <div class="section-head"><i></i><h2>후속 업무</h2></div>
+    <table>
+      <thead><tr><th>후속 업무</th><th>담당자</th><th>기한</th><th>상태</th></tr></thead>
+      <tbody>${actionRows}</tbody>
+    </table>
+  </section>
+
+  <footer><strong>MEKICS</strong><span>Generated ${escapeHTML(generated)}</span></footer>
+</div>
+<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script>
+</body>
+</html>`;
   }
 
   function exportMeetingPdf(meetingId) {
